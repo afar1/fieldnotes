@@ -1,0 +1,10 @@
+/* Base terminal theme styles */
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #1a1a1a;
+  color: #ffffff;
+  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+}
+
+/* Remove all other styles to prevent conflicts */

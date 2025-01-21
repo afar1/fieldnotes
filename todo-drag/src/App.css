@@ -1,0 +1,419 @@
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #1a1a1a;
+  color: #ffffff;
+  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+  overflow: hidden;
+  height: 100vh;
+  position: fixed;
+  width: 100%;
+}
+
+.app-container {
+  padding: 10px 0;
+  user-select: none;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  overflow: hidden;
+  position: fixed;
+  top: 0;
+  left: 0;
+}
+
+.input-area {
+  margin-bottom: 20px;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+.input-area textarea {
+  width: 66.666%;
+  padding: 12px;
+  border: none;
+  border-radius: 0;
+  font-size: 14px;
+  resize: none;
+  background-color: #1a1a1a;
+  color: #ffffff;
+  font-family: inherit;
+}
+
+.input-area textarea:focus {
+  outline: none;
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0;
+  background-color: #1a1a1a;
+  width: 100%;
+  height: calc(100vh - 150px);
+  overflow: hidden;
+}
+
+.column {
+  background-color: #1a1a1a;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  border: 1px solid #333;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Special styling for the split column */
+.column.split-column {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.split-section {
+  display: flex;
+  flex-direction: column;
+  height: 50%;
+  border-bottom: 1px solid #333;
+  overflow: hidden;
+}
+
+.split-section:last-child {
+  border-bottom: none;
+}
+
+.split-section .droppable-area {
+  height: calc(100% - 32px); /* Account for header height */
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.column h2 {
+  margin: 0;
+  padding: 8px 20px;
+  font-size: 12px;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-weight: normal;
+  transition: color 0.2s ease;
+  cursor: pointer;
+}
+
+/* Make hover state more specific to ensure it takes precedence */
+.column h2.hovered {
+  color: #ffffff !important;
+}
+
+.column.dragging-over h2 {
+  color: #ffffff;
+}
+
+.droppable-area {
+  flex: 1;
+  padding: 8px 16px !important;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  cursor: text;
+  border: 1px dashed #333;
+  border-radius: 4px;
+  margin: 8px;
+  width: calc(100% - 16px); /* Ensure full width minus margins */
+  box-sizing: border-box;
+  pointer-events: auto !important; /* Ensure drag events are captured */
+}
+
+/* Make the border more visible when dragging over */
+.droppable-area.dragging-over {
+  border-color: #264f78;
+  background-color: rgba(38, 79, 120, 0.1);
+}
+
+/* Add custom scrollbar styling */
+.droppable-area::-webkit-scrollbar {
+  width: 8px;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.droppable-area::-webkit-scrollbar-track {
+  background: #1a1a1a;
+}
+
+.droppable-area::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+/* Show scrollbar when scrolling or hovering */
+.droppable-area:hover::-webkit-scrollbar,
+.droppable-area:hover::-webkit-scrollbar-thumb,
+.droppable-area::-webkit-scrollbar-thumb:active {
+  opacity: 1;
+}
+
+.droppable-area::-webkit-scrollbar-thumb:hover {
+  background: #444;
+}
+
+/* Firefox scrollbar styling */
+.droppable-area {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.3s ease;
+}
+
+.droppable-area:hover,
+.droppable-area:active {
+  scrollbar-color: #333 #1a1a1a;
+}
+
+.todo-item {
+  padding: 4px 8px;
+  margin: 0 8px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #d4d4d4;
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  transition: all 0.1s ease;
+  background-color: transparent;
+  display: inline-block;
+  max-width: fit-content;
+  min-width: 50px;
+  pointer-events: none;
+  padding-right: 16px;
+}
+
+/* Enable pointer events only on the content */
+.todo-item > span,
+.todo-item > .timestamp {
+  pointer-events: auto;
+}
+
+.todo-item:hover {
+  background-color: #2d2d2d;
+}
+
+.todo-item.selected {
+  background-color: #264f78 !important;
+}
+
+.timestamp {
+  margin-left: 12px;
+  padding: 2px 6px;
+  opacity: 0.7;
+  font-size: 12px;
+  color: #888;
+  background-color: rgba(255, 255, 255, 0.05);
+  border-radius: 3px;
+  display: inline-block;
+  min-width: 32px;
+  text-align: center;
+}
+
+/* Hide the dragged item during drag */
+[data-rbd-draggable-context-id] [data-rbd-draggable-id] {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Make the drag preview visible */
+[data-rbd-preview] .todo-item {
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+.move-right-button {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: #666;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 4px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.todo-item:hover .move-right-button {
+  opacity: 0.7;
+}
+
+.move-right-button:hover {
+  opacity: 1;
+  color: #ffffff;
+}
+
+.edit-input {
+  width: 100%;
+  padding: 4px 0;
+  margin: 0;
+  border: none;
+  background-color: #1a1a1a;
+  color: #ffffff;
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.edit-input:focus {
+  outline: none;
+}
+
+.selection-box {
+  background-color: rgba(38, 79, 120, 0.2);
+  border: 1px solid #264f78;
+  position: fixed;
+  pointer-events: none;
+  z-index: 1000;
+}
+
+/* Update pointer events for draggable items */
+[data-rbd-draggable-context-id] {
+  pointer-events: auto !important;
+}
+
+[data-rbd-draggable-context-id] .todo-item {
+  pointer-events: auto;
+}
+
+[data-rbd-draggable-context-id] .todo-item > span {
+  pointer-events: auto;
+  display: inline-block;
+}
+
+.move-buttons {
+  display: none;
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  gap: 2px;
+}
+
+.todo-item:hover .move-buttons {
+  display: flex;
+}
+
+.move-button {
+  background: none;
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  padding: 2px 6px;
+  font-size: 12px;
+  border-radius: 3px;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+.move-button:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.column-search {
+  margin: 0;
+  padding: 4px 20px;
+  font-size: 12px;
+  background: #1a1a1a;
+  border: none;
+  color: #fff;
+  width: calc(100% - 40px);
+  font-family: inherit;
+  border-bottom: 1px solid #333;
+}
+
+.column-search:focus {
+  outline: none;
+  background: #262626;
+}
+
+.todo-item.filtered {
+  display: none !important;
+}
+
+.quick-add-input {
+  width: calc(100% - 16px);
+  padding: 4px 8px;
+  margin: 4px 0;
+  border: none;
+  background-color: #262626;
+  color: #ffffff;
+  font-size: 14px;
+  font-family: inherit;
+  border-radius: 3px;
+}
+
+.quick-add-input:focus {
+  outline: none;
+  background-color: #333;
+}
+
+.column.keyboard-focused {
+  outline: 2px solid #264f78;
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
+.column.keyboard-focused h2 {
+  color: #fff;
+}
+
+/* Grid Overlay System */
+.grid-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 9999;
+  display: grid;
+  grid-template-columns: repeat(20, 1fr);
+  grid-template-rows: repeat(20, 1fr);
+}
+
+.grid-cell {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.3);
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.5);
+}
+
+.grid-cell::before {
+  content: attr(data-coord);
+  font-family: monospace;
+}
+
+.toggle-grid {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  background: rgba(0, 0, 0, 0.5);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  z-index: 10000;
+  font-size: 12px;
+}
+
+.toggle-grid:hover {
+  background: rgba(0, 0, 0, 0.7);
+}
