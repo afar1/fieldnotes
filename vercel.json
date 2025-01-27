@@ -5,26 +5,26 @@
       "src": "todo-drag/package.json",
       "use": "@vercel/static-build",
       "config": {
-        "distDir": "todo-drag/build"
+        "distDir": "build"
       }
     }
   ],
   "routes": [
     {
       "src": "/static/(.*)",
-      "dest": "/todo-drag/static/$1"
+      "dest": "/static/$1"
     },
     {
       "src": "/favicon.ico",
-      "dest": "/todo-drag/favicon.ico"
+      "dest": "/favicon.ico"
     },
     {
       "src": "/manifest.json",
-      "dest": "/todo-drag/manifest.json"
+      "dest": "/manifest.json"
     },
     {
       "src": "/(.*)",
-      "dest": "/todo-drag/index.html"
+      "dest": "/index.html"
     }
   ]
 } 
