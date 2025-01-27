@@ -89,9 +89,8 @@ function App() {
 
   const inputRef = useRef(null);
   const isUndoingRef = useRef(false);
-  // History state for undo functionality - only accessed through setHistory
   const [history, setHistory] = useState([]);
-
+  
   // Add this state for tracking quick-add input
   const [quickAddColumn, setQuickAddColumn] = useState(null);
 
@@ -138,47 +137,6 @@ function App() {
       console.error('Error saving to localStorage:', error);
     }
   };
-
-  // Update history when columns change
-  useEffect(() => {
-    if (!isUndoingRef.current) {
-      setHistory(prev => [...prev, JSON.stringify(columns)]);
-    }
-  }, [columns]);
-
-  // Handle undo
-  const handleUndo = useCallback(() => {
-    setHistory(prev => {
-      if (prev.length < 2) return prev; // Need at least 2 items to undo (current + previous)
-      
-      const newHistory = prev.slice(0, -1);
-      isUndoingRef.current = true;
-      
-      // Restore the previous state
-      const previousState = JSON.parse(newHistory[newHistory.length - 1]);
-      setColumns(previousState);
-      
-      // Reset the undo flag after a short delay
-      setTimeout(() => {
-        isUndoingRef.current = false;
-      }, 0);
-      
-      return newHistory;
-    });
-  }, []);
-
-  // Add keyboard shortcut for undo
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
-        e.preventDefault();
-        handleUndo();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleUndo]);
 
   // Handle new item submission
   const handleKeyDown = (e) => {
@@ -268,6 +226,14 @@ function App() {
       });
     }
   };
+
+  // Update hover handling to clear keyboard focus
+  const handleColumnHover = useCallback((columnId) => {
+    // Only prevent hover updates during drag operations
+    if (isDragging) return;
+    setHoveredColumn(columnId);
+    setKeyboardFocusedColumn(null);
+  }, [isDragging, setHoveredColumn, setKeyboardFocusedColumn]);
 
   // Get effective column (keyboard focus takes precedence over hover)
   const getEffectiveColumn = useCallback(() => {
@@ -509,14 +475,6 @@ function App() {
       [columnId]: ''
     }));
   };
-
-  // Update hover handling to clear keyboard focus
-  const handleColumnHover = useCallback((columnId) => {
-    // Only prevent hover updates during drag operations
-    if (isDragging) return;
-    setHoveredColumn(columnId);
-    setKeyboardFocusedColumn(null);
-  }, [isDragging, setHoveredColumn, setKeyboardFocusedColumn]);
 
   // Restore Cmd+A functionality
   useEffect(() => {
@@ -826,8 +784,6 @@ function App() {
     // Get container offset
     const container = document.querySelector('.columns');
     if (!container) return null;
-    
-    const containerRect = container.getBoundingClientRect();
 
     // Get all column elements with adjusted positions
     const columns = COLUMN_SEQUENCE.map(id => ({
@@ -870,7 +826,7 @@ function App() {
 
       return currentDist < nearestDist ? current : nearest;
     }).id;
-  }, [COLUMN_SEQUENCE]);
+  }, []);
 
   // Grid overlay component
   const GridOverlay = () => {
@@ -888,6 +844,47 @@ function App() {
     }
     return <div className="grid-overlay">{cells}</div>;
   };
+
+  // Update history when columns change
+  useEffect(() => {
+    if (!isUndoingRef.current) {
+      setHistory(prev => [...prev, JSON.stringify(columns)]);
+    }
+  }, [columns]);
+
+  // Handle undo
+  const handleUndo = useCallback(() => {
+    setHistory(prev => {
+      if (prev.length < 2) return prev; // Need at least 2 items to undo (current + previous)
+      
+      const newHistory = prev.slice(0, -1);
+      isUndoingRef.current = true;
+      
+      // Restore the previous state
+      const previousState = JSON.parse(newHistory[newHistory.length - 1]);
+      setColumns(previousState);
+      
+      // Reset the undo flag after a short delay
+      setTimeout(() => {
+        isUndoingRef.current = false;
+      }, 0);
+      
+      return newHistory;
+    });
+  }, [setColumns]);
+
+  // Add keyboard shortcut for undo
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
+        e.preventDefault();
+        handleUndo();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleUndo]);
 
   return (
     <DragDropContext 
