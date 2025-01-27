@@ -1,14 +1,7 @@
 {
   "version": 2,
-  "builds": [
-    {
-      "src": "todo-drag/package.json",
-      "use": "@vercel/static-build",
-      "config": {
-        "distDir": "build"
-      }
-    }
-  ],
+  "buildCommand": "cd todo-drag && npm install && npm run build",
+  "outputDirectory": "todo-drag/build",
   "routes": [
     {
       "src": "/static/(.*)",
