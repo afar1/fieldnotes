@@ -37,7 +37,7 @@ const DEFAULT_STATE = {
 };
 
 // Column sequence for navigation
-const COLUMN_SEQUENCE = ['do', 'done', 'ignore', 'others'];
+const COLUMN_SEQUENCE = ['do', 'ignore', 'others'];
 
 // Validate column structure
 const validateColumnStructure = (column, defaultColumn) => {
@@ -165,6 +165,12 @@ function App() {
   // Add state for grid visibility
   const [showGrid, setShowGrid] = useState(false);
 
+  // Add state for showing done items
+  const [showDone, setShowDone] = useState(false);
+
+  // Add state for DONE blink effect
+  const [doneBlinking, setDoneBlinking] = useState(false);
+
   // Notify tip system of completed actions - moved to top
   const notifyTipAction = useCallback((action) => {
     if (tipActionHandler) {
@@ -277,13 +283,17 @@ function App() {
     }
   };
 
-  // Update hover handling to clear keyboard focus
+  // Update hover handling to clear keyboard focus only when mouse moves
   const handleColumnHover = useCallback((columnId) => {
     // Only prevent hover updates during drag operations
     if (isDragging) return;
+    
+    // Only clear keyboard focus if the mouse actually moved
+    if (columnId !== hoveredColumn) {
+      setKeyboardFocusedColumn(null);
+    }
     setHoveredColumn(columnId);
-    setKeyboardFocusedColumn(null);
-  }, [isDragging, setHoveredColumn, setKeyboardFocusedColumn]);
+  }, [isDragging, hoveredColumn]);
 
   // Get effective column (keyboard focus takes precedence over hover)
   const getEffectiveColumn = useCallback(() => {
@@ -445,6 +455,12 @@ function App() {
         getPreviousColumnId(currentColumnId) : 
         getNextColumnId(currentColumnId);
       
+      // If moving to DONE column, trigger blink
+      if (targetColumnId === 'done') {
+        setDoneBlinking(true);
+        setTimeout(() => setDoneBlinking(false), 500);
+      }
+
       setColumns(prev => {
         if (!prev || !prev[targetColumnId]) return prev;
 
@@ -581,52 +597,102 @@ function App() {
 
   // Handle quick-add input events
   const handleQuickAddKeyDown = useCallback((e, columnId) => {
-    if (e.key === 'Enter') {
+    if (e.key === 'Enter' || (e.key === 'Tab' && e.target.value.trim() === '')) {
+      e.preventDefault();
       try {
-        // Validate column ID
-        if (!COLUMN_SEQUENCE.includes(columnId)) {
-          throw new Error(`Invalid column ID: ${columnId}`);
-        }
-
         const sanitizedText = sanitizeItemText(e.target.value);
-        if (!sanitizedText) return;
-        
-        setColumns(prev => {
-          if (!prev || !prev[columnId]) return prev;
-
-          const updated = { ...prev };
-          const newItem = {
-            id: `id-${Date.now()}-${Math.random()}`,
-            text: sanitizedText,
-            completedAt: columnId === 'done' ? new Date().toISOString() : undefined
-          };
-          
-          updated[columnId] = {
-            ...updated[columnId],
-            items: columnId === 'done' 
-              ? [newItem, ...updated[columnId].items]
-              : [...updated[columnId].items, newItem]
-          };
-          
-          return updated;
-        });
+        if (sanitizedText) {
+          setColumns(prev => {
+            const updated = { ...prev };
+            const newItem = {
+              id: `id-${Date.now()}-${Math.random()}`,
+              text: sanitizedText,
+              completedAt: columnId === 'done' ? new Date().toISOString() : undefined
+            };
+            
+            updated[columnId] = {
+              ...updated[columnId],
+              items: columnId === 'done' 
+                ? [newItem, ...updated[columnId].items]
+                : [...updated[columnId].items, newItem]
+            };
+            
+            return updated;
+          });
+        }
+        e.target.value = '';
+        if (e.key === 'Tab' && e.target.value.trim() === '') {
+          // Only move to next column if tab was pressed on empty input
+          const nextColumnId = getNextColumnId(columnId);
+          setQuickAddColumn(nextColumnId);
+        }
       } catch (error) {
         console.error('Error adding item:', error);
       }
-
-      e.target.value = '';
-      e.preventDefault(); // Prevent default Enter behavior
-      setQuickAddColumn(null);
-    } else if (e.key === 'Escape') {
-      setQuickAddColumn(null);
+    } else if (e.key === 'Tab' && e.target.value.trim() !== '') {
+      // If tab with text, add the item but stay in same column
+      e.preventDefault();
+      try {
+        const sanitizedText = sanitizeItemText(e.target.value);
+        if (sanitizedText) {
+          setColumns(prev => {
+            const updated = { ...prev };
+            const newItem = {
+              id: `id-${Date.now()}-${Math.random()}`,
+              text: sanitizedText,
+              completedAt: columnId === 'done' ? new Date().toISOString() : undefined
+            };
+            
+            updated[columnId] = {
+              ...updated[columnId],
+              items: columnId === 'done' 
+                ? [newItem, ...updated[columnId].items]
+                : [...updated[columnId].items, newItem]
+            };
+            
+            return updated;
+          });
+          e.target.value = '';
+        }
+      } catch (error) {
+        console.error('Error adding item:', error);
+      }
+    } else if (e.key === 'Backspace' && e.target.value === '') {
+      // If backspace is pressed on empty input, try to edit the last item in the column above
+      const prevColumnId = getPreviousColumnId(columnId);
+      const prevColumn = columns[prevColumnId];
+      if (prevColumn && prevColumn.items.length > 0) {
+        const lastItem = prevColumn.items[prevColumn.items.length - 1];
+        startEditItem(lastItem);
+        setQuickAddColumn(null);
+      }
     }
-  }, [COLUMN_SEQUENCE, sanitizeItemText, setColumns, setQuickAddColumn]);
+  }, [columns, getNextColumnId, getPreviousColumnId, sanitizeItemText]);
 
   // Handle quick-add input blur
-  const handleQuickAddBlur = useCallback(() => {
-    // Only reset quick-add states, not hover
+  const handleQuickAddBlur = useCallback((e) => {
+    const sanitizedText = sanitizeItemText(e.target.value);
+    if (sanitizedText && quickAddColumn) {
+      setColumns(prev => {
+        const updated = { ...prev };
+        const newItem = {
+          id: `id-${Date.now()}-${Math.random()}`,
+          text: sanitizedText,
+          completedAt: quickAddColumn === 'done' ? new Date().toISOString() : undefined
+        };
+        
+        updated[quickAddColumn] = {
+          ...updated[quickAddColumn],
+          items: quickAddColumn === 'done' 
+            ? [newItem, ...updated[quickAddColumn].items]
+            : [...updated[quickAddColumn].items, newItem]
+        };
+        
+        return updated;
+      });
+    }
     setQuickAddColumn(null);
-  }, []);
+  }, [quickAddColumn, sanitizeItemText]);
 
   // Clean up states when unmounting or when drag starts
   useEffect(() => {
@@ -652,6 +718,12 @@ function App() {
         onBlur={handleQuickAddBlur}
         onKeyDown={(e) => handleQuickAddKeyDown(e, columnId)}
         onClick={(e) => e.stopPropagation()} // Prevent click from bubbling
+        style={{
+          position: 'relative',
+          display: 'inline-block',
+          minWidth: '50px',
+          maxWidth: 'calc(100% - 32px)'
+        }}
       />
     );
   }, [quickAddColumn, handleQuickAddBlur, handleQuickAddKeyDown]);
@@ -953,6 +1025,81 @@ function App() {
     }
   }, []);
 
+  // Toggle between DO and DONE
+  const toggleDoDone = () => {
+    setShowDone(prev => !prev);
+  };
+
+  // Render draggable item
+  const renderDraggableItem = (provided, snapshot, item, columnId) => (
+    <div
+      ref={provided.innerRef}
+      {...provided.draggableProps}
+      {...provided.dragHandleProps}
+      className={selectedIds.includes(item.id) ? 'selected' : ''}
+      style={{
+        ...provided.draggableProps.style,
+        opacity: snapshot.isDragging ? 0.8 : 1,
+      }}
+    >
+      {editItemId === item.id ? (
+        <EditableItem
+          item={item}
+          onSave={(newText) => saveEditItem(columnId, item.id, newText)}
+          onCancel={() => setEditItemId(null)}
+        />
+      ) : (
+        <SelectableItem
+          todo={item}
+          isSelected={selectedIds.includes(item.id)}
+          onClick={(e) => {
+            if (e.shiftKey) {
+              toggleSelection(item.id, e);
+            } else if (e.metaKey || e.ctrlKey) {
+              // Command/Ctrl+click to edit
+              startEditItem(item);
+            } else if (!isRbdDragging) {
+              // Regular click moves to DONE from any column
+              if (columnId !== 'done') {
+                // Set the blink effect
+                setDoneBlinking(true);
+                setTimeout(() => setDoneBlinking(false), 500);
+                
+                // Move the item to DONE
+                setColumns(prev => {
+                  const updated = { ...prev };
+                  const now = new Date().toISOString();
+                  
+                  // Remove item from current column
+                  const sourceColumn = { ...updated[columnId] };
+                  const [movedItem] = sourceColumn.items.filter(i => i.id === item.id);
+                  sourceColumn.items = sourceColumn.items.filter(i => i.id !== item.id);
+                  updated[columnId] = sourceColumn;
+
+                  // Add to DONE column with timestamp
+                  const doneColumn = { ...updated.done };
+                  doneColumn.items = [
+                    { ...movedItem, completedAt: now },
+                    ...doneColumn.items
+                  ];
+                  updated.done = doneColumn;
+
+                  return updated;
+                });
+                setSelectedIds([]);
+              }
+            }
+          }}
+          onDoubleClick={() => {
+            // Remove double click since single click moves to DONE
+            return;
+          }}
+          columnId={columnId}
+        />
+      )}
+    </div>
+  );
+
   return (
     <>
       {isMigrating && <MigrationOverlay onComplete={handleMigrationComplete} />}
@@ -1076,281 +1223,138 @@ function App() {
           </div>
 
           <div className="columns">
-            {['do', 'done'].map((columnId) => (
-              <div 
-                key={columnId} 
-                className={`column ${keyboardFocusedColumn === columnId ? 'keyboard-focused' : ''}`}
+            {/* DO/DONE Column */}
+            <div 
+              className={`column ${keyboardFocusedColumn === (showDone ? 'done' : 'do') ? 'keyboard-focused' : ''}`}
+            >
+              <h2 
+                onClick={toggleDoDone}
+                className={getEffectiveColumn() === (showDone ? 'done' : 'do') ? 'hovered' : ''}
               >
-                {searchingColumn === columnId ? (
-                  <input
-                    className="column-search"
-                    placeholder={`Search in ${columns[columnId].name}...`}
-                    value={columnSearch[columnId]}
-                    autoFocus
-                    onChange={(e) => handleColumnSearch(columnId, e.target.value)}
-                    onBlur={() => exitSearch(columnId)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === 'Escape') {
-                        exitSearch(columnId);
-                      }
-                    }}
-                  />
+                {showDone ? (
+                  <>
+                    <span className="done-text">DO</span> / <span className={doneBlinking ? 'blink-done' : ''}>DONE</span>
+                  </>
                 ) : (
-                  <h2 
-                    onClick={() => setSearchingColumn(columnId)}
-                    className={getEffectiveColumn() === columnId ? 'hovered' : ''}
-                  >
-                    {columns[columnId].name}
-                  </h2>
+                  <>
+                    DO / <span className={`done-text ${doneBlinking ? 'blink-done' : ''}`}>DONE</span>
+                  </>
                 )}
-                <StrictModeDroppable droppableId={columnId}>
-                  {(provided, snapshot) => (
-                    <div
-                      id={`column-${columnId}`}
-                      ref={provided.innerRef}
-                      {...provided.droppableProps}
-                      className={`droppable-area ${snapshot.isDraggingOver ? 'dragging-over' : ''}`}
-                      onMouseEnter={() => handleColumnHover(columnId)}
-                      onMouseLeave={() => handleColumnHover(null)}
-                    >
-                      {filterItems(columns[columnId].items, columnId).map((item, index) => (
-                        <Draggable 
-                          key={item.id} 
-                          draggableId={item.id} 
-                          index={index}
-                        >
-                          {(provided, snapshot) => (
-                            <div
-                              ref={provided.innerRef}
-                              {...provided.draggableProps}
-                              {...provided.dragHandleProps}
-                              className={selectedIds.includes(item.id) ? 'selected' : ''}
-                              style={{
-                                ...provided.draggableProps.style,
-                                opacity: snapshot.isDragging ? 0.8 : 1,
-                              }}
-                            >
-                              {editItemId === item.id ? (
-                                <EditableItem
-                                  item={item}
-                                  onSave={(newText) => saveEditItem(columnId, item.id, newText)}
-                                  onCancel={() => setEditItemId(null)}
-                                />
-                              ) : (
-                                <SelectableItem
-                                  todo={item}
-                                  isSelected={selectedIds.includes(item.id)}
-                                  onClick={(e) => {
-                                    if (e.shiftKey) {
-                                      toggleSelection(item.id, e);
-                                    } else if (e.metaKey || e.ctrlKey) {
-                                      // Only move single items with Cmd+Click
-                                      moveToNextColumn(columnId, [item.id]);
-                                      setSelectedIds([]);
-                                    } else if (!isRbdDragging) {
-                                      startEditItem(item);
-                                    }
-                                  }}
-                                  onDoubleClick={() => {
-                                    // Remove double click since single click now edits
-                                    return;
-                                  }}
-                                  columnId={columnId}
-                                />
-                              )}
-                            </div>
-                          )}
-                        </Draggable>
-                      ))}
-                      {renderQuickAddInput(columnId)}
-                      {provided.placeholder}
-                    </div>
-                  )}
-                </StrictModeDroppable>
-              </div>
-            ))}
-            
-            {/* Split column for IGNORE and OTHERS */}
-            <div className="column split-column">
-              {/* IGNORE section */}
-              <div className="split-section">
-                {searchingColumn === 'ignore' ? (
-                  <input
-                    className="column-search"
-                    placeholder={`Search in ${columns.ignore.name}...`}
-                    value={columnSearch.ignore}
-                    autoFocus
-                    onChange={(e) => handleColumnSearch('ignore', e.target.value)}
-                    onBlur={() => exitSearch('ignore')}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === 'Escape') {
-                        exitSearch('ignore');
-                      }
-                    }}
-                  />
-                ) : (
-                  <h2 
-                    onClick={() => setSearchingColumn('ignore')}
-                    className={getEffectiveColumn() === 'ignore' ? 'hovered' : ''}
+              </h2>
+              <StrictModeDroppable droppableId={showDone ? 'done' : 'do'}>
+                {(provided, snapshot) => (
+                  <div
+                    id={`column-${showDone ? 'done' : 'do'}`}
+                    ref={provided.innerRef}
+                    {...provided.droppableProps}
+                    className={`droppable-area ${snapshot.isDraggingOver ? 'dragging-over' : ''}`}
+                    onMouseEnter={() => handleColumnHover(showDone ? 'done' : 'do')}
+                    onMouseLeave={() => handleColumnHover(null)}
                   >
-                    {columns.ignore.name}
-                  </h2>
+                    {filterItems(columns[showDone ? 'done' : 'do'].items, showDone ? 'done' : 'do').map((item, index) => (
+                      <Draggable 
+                        key={item.id} 
+                        draggableId={item.id} 
+                        index={index}
+                      >
+                        {(provided, snapshot) => renderDraggableItem(provided, snapshot, item, showDone ? 'done' : 'do')}
+                      </Draggable>
+                    ))}
+                    {getEffectiveColumn() === (showDone ? 'done' : 'do') && !quickAddColumn && (
+                      <div 
+                        className="cursor-line"
+                        onClick={() => setQuickAddColumn(showDone ? 'done' : 'do')}
+                      />
+                    )}
+                    {renderQuickAddInput(showDone ? 'done' : 'do')}
+                    {provided.placeholder}
+                  </div>
                 )}
-                <StrictModeDroppable droppableId="ignore">
-                  {(provided, snapshot) => (
-                    <div
-                      id="column-ignore"
-                      ref={provided.innerRef}
-                      {...provided.droppableProps}
-                      className={`droppable-area ${snapshot.isDraggingOver ? 'dragging-over' : ''}`}
-                      onMouseEnter={() => handleColumnHover('ignore')}
-                      onMouseLeave={() => handleColumnHover(null)}
-                    >
-                      {filterItems(columns.ignore.items, 'ignore').map((item, index) => (
-                        <Draggable 
-                          key={item.id} 
-                          draggableId={item.id} 
-                          index={index}
-                        >
-                          {(provided, snapshot) => (
-                            <div
-                              ref={provided.innerRef}
-                              {...provided.draggableProps}
-                              {...provided.dragHandleProps}
-                              className={selectedIds.includes(item.id) ? 'selected' : ''}
-                              style={{
-                                ...provided.draggableProps.style,
-                                opacity: snapshot.isDragging ? 0.8 : 1,
-                              }}
-                            >
-                              {editItemId === item.id ? (
-                                <EditableItem
-                                  item={item}
-                                  onSave={(newText) => saveEditItem('ignore', item.id, newText)}
-                                  onCancel={() => setEditItemId(null)}
-                                />
-                              ) : (
-                                <SelectableItem
-                                  todo={item}
-                                  isSelected={selectedIds.includes(item.id)}
-                                  onClick={(e) => {
-                                    if (e.shiftKey) {
-                                      toggleSelection(item.id, e);
-                                    } else if (e.metaKey || e.ctrlKey) {
-                                      // Only move single items with Cmd+Click
-                                      moveToNextColumn('ignore', [item.id]);
-                                      setSelectedIds([]);
-                                    } else if (!isRbdDragging) {
-                                      startEditItem(item);
-                                    }
-                                  }}
-                                  onDoubleClick={() => {
-                                    // Remove double click since single click now edits
-                                    return;
-                                  }}
-                                  columnId="ignore"
-                                />
-                              )}
-                            </div>
-                          )}
-                        </Draggable>
-                      ))}
-                      {renderQuickAddInput('ignore')}
-                      {provided.placeholder}
-                    </div>
-                  )}
-                </StrictModeDroppable>
-              </div>
+              </StrictModeDroppable>
+            </div>
 
-              {/* OTHERS section */}
-              <div className="split-section">
-                {searchingColumn === 'others' ? (
-                  <input
-                    className="column-search"
-                    placeholder={`Search in ${columns.others.name}...`}
-                    value={columnSearch.others}
-                    autoFocus
-                    onChange={(e) => handleColumnSearch('others', e.target.value)}
-                    onBlur={() => exitSearch('others')}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === 'Escape') {
-                        exitSearch('others');
-                      }
-                    }}
-                  />
-                ) : (
-                  <h2 
-                    onClick={() => setSearchingColumn('others')}
-                    className={getEffectiveColumn() === 'others' ? 'hovered' : ''}
+            {/* IGNORE Column */}
+            <div 
+              className={`column ${keyboardFocusedColumn === 'ignore' ? 'keyboard-focused' : ''}`}
+            >
+              <h2 
+                onClick={() => setSearchingColumn('ignore')}
+                className={getEffectiveColumn() === 'ignore' ? 'hovered' : ''}
+              >
+                IGNORE
+              </h2>
+              <StrictModeDroppable droppableId="ignore">
+                {(provided, snapshot) => (
+                  <div
+                    id="column-ignore"
+                    ref={provided.innerRef}
+                    {...provided.droppableProps}
+                    className={`droppable-area ${snapshot.isDraggingOver ? 'dragging-over' : ''}`}
+                    onMouseEnter={() => handleColumnHover('ignore')}
+                    onMouseLeave={() => handleColumnHover(null)}
                   >
-                    {columns.others.name}
-                  </h2>
+                    {filterItems(columns.ignore.items, 'ignore').map((item, index) => (
+                      <Draggable 
+                        key={item.id} 
+                        draggableId={item.id} 
+                        index={index}
+                      >
+                        {(provided, snapshot) => renderDraggableItem(provided, snapshot, item, 'ignore')}
+                      </Draggable>
+                    ))}
+                    {getEffectiveColumn() === 'ignore' && !quickAddColumn && (
+                      <div 
+                        className="cursor-line"
+                        onClick={() => setQuickAddColumn('ignore')}
+                      />
+                    )}
+                    {renderQuickAddInput('ignore')}
+                    {provided.placeholder}
+                  </div>
                 )}
-                <StrictModeDroppable droppableId="others">
-                  {(provided, snapshot) => (
-                    <div
-                      id="column-others"
-                      ref={provided.innerRef}
-                      {...provided.droppableProps}
-                      className={`droppable-area ${snapshot.isDraggingOver ? 'dragging-over' : ''}`}
-                      onMouseEnter={() => handleColumnHover('others')}
-                      onMouseLeave={() => handleColumnHover(null)}
-                    >
-                      {filterItems(columns.others.items, 'others').map((item, index) => (
-                        <Draggable 
-                          key={item.id} 
-                          draggableId={item.id} 
-                          index={index}
-                        >
-                          {(provided, snapshot) => (
-                            <div
-                              ref={provided.innerRef}
-                              {...provided.draggableProps}
-                              {...provided.dragHandleProps}
-                              className={selectedIds.includes(item.id) ? 'selected' : ''}
-                              style={{
-                                ...provided.draggableProps.style,
-                                opacity: snapshot.isDragging ? 0.8 : 1,
-                              }}
-                            >
-                              {editItemId === item.id ? (
-                                <EditableItem
-                                  item={item}
-                                  onSave={(newText) => saveEditItem('others', item.id, newText)}
-                                  onCancel={() => setEditItemId(null)}
-                                />
-                              ) : (
-                                <SelectableItem
-                                  todo={item}
-                                  isSelected={selectedIds.includes(item.id)}
-                                  onClick={(e) => {
-                                    if (e.shiftKey) {
-                                      toggleSelection(item.id, e);
-                                    } else if (e.metaKey || e.ctrlKey) {
-                                      // Only move single items with Cmd+Click
-                                      moveToNextColumn('others', [item.id]);
-                                      setSelectedIds([]);
-                                    } else if (!isRbdDragging) {
-                                      startEditItem(item);
-                                    }
-                                  }}
-                                  onDoubleClick={() => {
-                                    // Remove double click since single click now edits
-                                    return;
-                                  }}
-                                  columnId="others"
-                                />
-                              )}
-                            </div>
-                          )}
-                        </Draggable>
-                      ))}
-                      {renderQuickAddInput('others')}
-                      {provided.placeholder}
-                    </div>
-                  )}
-                </StrictModeDroppable>
-              </div>
+              </StrictModeDroppable>
+            </div>
+
+            {/* OTHERS Column */}
+            <div 
+              className={`column ${keyboardFocusedColumn === 'others' ? 'keyboard-focused' : ''}`}
+            >
+              <h2 
+                onClick={() => setSearchingColumn('others')}
+                className={getEffectiveColumn() === 'others' ? 'hovered' : ''}
+              >
+                OTHERS
+              </h2>
+              <StrictModeDroppable droppableId="others">
+                {(provided, snapshot) => (
+                  <div
+                    id="column-others"
+                    ref={provided.innerRef}
+                    {...provided.droppableProps}
+                    className={`droppable-area ${snapshot.isDraggingOver ? 'dragging-over' : ''}`}
+                    onMouseEnter={() => handleColumnHover('others')}
+                    onMouseLeave={() => handleColumnHover(null)}
+                  >
+                    {filterItems(columns.others.items, 'others').map((item, index) => (
+                      <Draggable 
+                        key={item.id} 
+                        draggableId={item.id} 
+                        index={index}
+                      >
+                        {(provided, snapshot) => renderDraggableItem(provided, snapshot, item, 'others')}
+                      </Draggable>
+                    ))}
+                    {getEffectiveColumn() === 'others' && !quickAddColumn && (
+                      <div 
+                        className="cursor-line"
+                        onClick={() => setQuickAddColumn('others')}
+                      />
+                    )}
+                    {renderQuickAddInput('others')}
+                    {provided.placeholder}
+                  </div>
+                )}
+              </StrictModeDroppable>
             </div>
           </div>
         </div>

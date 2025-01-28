@@ -67,6 +67,12 @@ body {
   overflow: hidden;
 }
 
+/* Remove hover and focus styles from column borders */
+.column:hover,
+.column.keyboard-focused {
+  border-color: #333;
+}
+
 /* Special styling for the split column */
 .column.split-column {
   display: flex;
@@ -80,6 +86,17 @@ body {
   height: 50%;
   border-bottom: 1px solid #333;
   overflow: hidden;
+}
+
+/* Remove the column-level hover effect for split sections */
+.column.split-column:hover .droppable-area {
+  border-color: #333;
+}
+
+/* Add hover effect only to the specific split section being hovered */
+.split-section:hover .droppable-area,
+.split-section.keyboard-focused .droppable-area {
+  border-color: #ffffff;
 }
 
 .split-section:last-child {
@@ -102,6 +119,17 @@ body {
   font-weight: normal;
   transition: color 0.2s ease;
   cursor: pointer;
+  user-select: none;
+}
+
+/* Add styles for the DO/DONE toggle header */
+.column h2 .done-text {
+  color: #444;
+  margin-left: 4px;
+}
+
+.column h2.hovered .done-text {
+  color: #888;
 }
 
 /* Make hover state more specific to ensure it takes precedence */
@@ -123,9 +151,21 @@ body {
   border: 1px dashed #333;
   border-radius: 4px;
   margin: 8px;
-  width: calc(100% - 16px); /* Ensure full width minus margins */
+  width: calc(100% - 16px);
   box-sizing: border-box;
-  pointer-events: auto !important; /* Ensure drag events are captured */
+  pointer-events: auto !important;
+  transition: border-color 0.2s ease;
+}
+
+/* Update hover effects for all columns */
+.column:hover .droppable-area,
+.column.keyboard-focused .droppable-area {
+  border-color: #ffffff;
+}
+
+/* Keep keyboard focus styles */
+.column.keyboard-focused .droppable-area {
+  border-color: #ffffff;
 }
 
 /* Make the border more visible when dragging over */
@@ -344,27 +384,68 @@ body {
   display: none !important;
 }
 
+/* Blinking cursor styles */
+.cursor-line {
+  position: relative;
+  height: 24px;
+  margin: 4px 8px;
+  padding: 4px 8px;
+}
+
+.cursor-line::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 6px;
+  height: 16px;
+  width: 2px;
+  background-color: #007acc;
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* Add blink effect for DONE */
+@keyframes blinkBlue {
+  0%, 100% { color: #666; }
+  50% { color: #007acc; }
+}
+
+.column h2 .blink-done {
+  animation: blinkBlue 0.5s ease-in-out;
+}
+
+/* Update quick-add input to align with cursor */
 .quick-add-input {
   width: calc(100% - 16px);
   padding: 4px 8px;
   margin: 4px 0;
   border: none;
-  background-color: #262626;
+  background-color: transparent;
   color: #ffffff;
   font-size: 14px;
   font-family: inherit;
-  border-radius: 3px;
+  caret-color: #007acc;
 }
 
 .quick-add-input:focus {
   outline: none;
-  background-color: #333;
+  background-color: transparent;
 }
 
-.column.keyboard-focused {
-  outline: 2px solid #264f78;
-  outline-offset: -2px;
-  border-radius: 4px;
+/* Style the text selection */
+.quick-add-input::selection {
+  background-color: rgba(0, 122, 204, 0.5);
+}
+
+/* Ensure consistent cursor width across browsers */
+@supports (caret-width: 2px) {
+  .quick-add-input {
+    caret-width: 2px;
+  }
 }
 
 .column.keyboard-focused h2 {
