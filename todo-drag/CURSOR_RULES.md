@@ -1,4 +1,95 @@
-# Cursor Development Rules
+# Cursor Rules & Meeting Notes
+
+## Meeting Notes (Date: Feb 5, 2024)
+
+### Issues Addressed
+1. Fixed runtime errors in `SelectableItem` component
+   - Added null check for undefined items
+   - Unified prop naming (`item` instead of `todo`)
+   - Added proper keyboard focus handling
+   - Added warning message for invalid items
+
+2. Restored and Fixed Undo Functionality
+   - Maintained `history` state for tracking changes
+   - Implemented proper undo mechanism with `handleUndo`
+   - Added Cmd/Ctrl + Z keyboard shortcut
+   - Uses `isUndoingRef` to prevent infinite loops
+
+### Current Component Structure
+
+#### SelectableItem Component
+```javascript
+const SelectableItem = ({ item, isSelected, isFocused, onClick, columnId }) => {
+  // Guards against undefined items
+  if (!item || !item.id) {
+    console.warn('SelectableItem received undefined or invalid item');
+    return null;
+  }
+  // ... rest of component
+}
+```
+
+### Key Features
+
+1. **Undo System**
+   - Tracks all column changes in history
+   - Allows undoing with Cmd/Ctrl + Z
+   - Prevents recursive updates with `isUndoingRef`
+   - Maintains state consistency
+
+2. **Item Selection**
+   - Keyboard focus support
+   - Mouse selection
+   - Multi-select with shift-click
+   - Drag selection
+
+3. **Column Management**
+   - DO/DONE toggle
+   - OTHERS/IGNORE toggle
+   - Column-specific search
+   - Blinking effects on column changes
+
+4. **Data Persistence**
+   - LocalStorage saving
+   - Version management
+   - Data migration support
+   - Data validation
+
+### Current State Management
+```javascript
+// Core States
+const [columns, setColumns] = useState(() => initialState.current.columns);
+const [selectedIds, setSelectedIds] = useState([]);
+const [history, setHistory] = useState([]);
+
+// UI States
+const [showDone, setShowDone] = useState(false);
+const [showIgnore, setShowIgnore] = useState(false);
+const [focusedItemId, setFocusedItemId] = useState(null);
+```
+
+### Known Issues & Solutions
+1. ESLint warning about unused `history` variable
+   - False positive due to usage in `handleUndo`
+   - Can be safely ignored as history is used properly
+
+2. SelectableItem undefined errors
+   - Fixed with proper null checks
+   - Added warning system for debugging
+   - Improved prop interface
+
+### Development Rules
+1. Always maintain undo functionality
+2. Guard against undefined items in components
+3. Use consistent prop naming across components
+4. Implement proper keyboard navigation support
+5. Maintain data persistence with version control
+
+### Next Steps
+1. Consider adding error boundaries
+2. Improve type checking
+3. Consider adding tests for edge cases
+4. Document component interfaces
 
 ## Pro Tips System Guidelines
 

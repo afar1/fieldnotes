@@ -1,8 +1,14 @@
 import React, { useState } from 'react';
 
-const SelectableItem = ({ isSelected, todo, onClick, onDoubleClick, columnId }) => {
+const SelectableItem = ({ item, isSelected, isFocused, onClick, columnId }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [wasJustDragged, setWasJustDragged] = useState(false);
+
+  // Guard against undefined item
+  if (!item || !item.id) {
+    console.warn('SelectableItem received undefined or invalid item');
+    return null;
+  }
 
   // Format the timestamp to show how long ago
   const formatTimeAgo = (timestamp) => {
@@ -28,10 +34,9 @@ const SelectableItem = ({ isSelected, todo, onClick, onDoubleClick, columnId }) 
 
   return (
     <div
-      className={`todo-item ${isSelected ? 'selected' : ''}`}
-      data-id={todo.id}
+      className={`todo-item ${isSelected ? 'selected' : ''} ${isFocused ? 'keyboard-focused' : ''}`}
+      data-id={item.id}
       onClick={handleClick}
-      onDoubleClick={onDoubleClick}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       onMouseDown={() => setWasJustDragged(false)}
@@ -40,13 +45,13 @@ const SelectableItem = ({ isSelected, todo, onClick, onDoubleClick, columnId }) 
         display: 'inline-block',
         maxWidth: 'fit-content',
         position: 'relative',
-        padding: '0 8px',  // Add horizontal padding for larger clickable area
+        padding: '0 8px',
         cursor: 'pointer'
       }}
     >
-      <span style={{ pointerEvents: 'auto', cursor: 'text' }}>{todo.text}</span>
-      {columnId === 'done' && todo.completedAt && isHovered && (
-        <span className="timestamp">{formatTimeAgo(todo.completedAt)}</span>
+      <span style={{ pointerEvents: 'auto', cursor: 'text' }}>{item.text}</span>
+      {columnId === 'done' && item.completedAt && isHovered && (
+        <span className="timestamp">{formatTimeAgo(item.completedAt)}</span>
       )}
     </div>
   );

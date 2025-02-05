@@ -4,7 +4,6 @@ import './App.css';
 
 import StrictModeDroppable from './components/StrictModeDroppable';
 import SelectableItem from './components/SelectableItem';
-import EditableItem from './components/EditableItem';
 import ProTipTooltip from './components/ProTipTooltip';
 import MigrationOverlay from './components/MigrationOverlay';
 
@@ -114,64 +113,40 @@ const loadInitialState = () => {
 };
 
 function App() {
-  // Add state for migration
   const [isMigrating, setIsMigrating] = useState(false);
   const initialState = useRef(loadInitialState());
   
   // State declarations
   const [columns, setColumns] = useState(() => initialState.current.columns);
-  const [editItemId, setEditItemId] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [dragEnd, setDragEnd] = useState({ x: 0, y: 0 });
-  const [searchingColumn, setSearchingColumn] = useState(null);
   const [columnSearch, setColumnSearch] = useState({
     do: '',
     done: '',
     ignore: '',
     others: ''
   });
-
-  const inputRef = useRef(null);
-  const isUndoingRef = useRef(false);
   const [history, setHistory] = useState([]);
+  const isUndoingRef = useRef(false);
+  const dragStartPos = useRef(null);
   
-  // Add this state for tracking quick-add input
   const [quickAddColumn, setQuickAddColumn] = useState(null);
-
-  // Add state to track if we've moved during drag
   const [hasMoved, setHasMoved] = useState(false);
-
-  // Add state to track which column is being hovered
   const [hoveredColumn, setHoveredColumn] = useState(null);
-
-  // Add state for tip action handler
   const [tipActionHandler, setTipActionHandler] = useState(null);
-
-  // Add clipboard state for cut/copy operations
   const [clipboard, setClipboard] = useState([]);
   const [isCut, setIsCut] = useState(false);
-
-  // Add state to track react-beautiful-dnd drag operations
   const [isRbdDragging, setIsRbdDragging] = useState(false);
-
-  // Add state for keyboard focus
   const [keyboardFocusedColumn, setKeyboardFocusedColumn] = useState(null);
-
-  // Add state for tracking drag start position
-  const dragStartPos = useRef(null);
-
-  // Add state for grid visibility
-  const [showGrid, setShowGrid] = useState(false);
-
-  // Add state for showing done items
   const [showDone, setShowDone] = useState(false);
-
-  // Add state for DONE blink effect
   const [doneBlinking, setDoneBlinking] = useState(false);
+  const [showIgnore, setShowIgnore] = useState(false);
+  const [ignoreBlinking, setIgnoreBlinking] = useState(false);
+  const [focusedItemId, setFocusedItemId] = useState(null);
 
-  // Notify tip system of completed actions - moved to top
+  // Notify tip system of completed actions
   const notifyTipAction = useCallback((action) => {
     if (tipActionHandler) {
       tipActionHandler(action);
@@ -194,72 +169,69 @@ function App() {
     }
   }, []);
 
-  // Handle new item submission
-  const handleKeyDown = (e) => {
-    // If user pressed Enter in the input
-    if (e.key === 'Enter') {
-      e.preventDefault();
+  // Wrap sanitizeItemText in useCallback
+  const sanitizeItemText = useCallback((text) => {
+    if (typeof text !== 'string') return '';
+    return text.trim().slice(0, 1000); // Limit length to 1000 chars
+  }, []);
 
-      if (!e.target.value.trim()) return;
+  // Wrap filterItems in useCallback
+  const filterItems = useCallback((items, columnId) => {
+    const searchText = columnSearch[columnId];
+    if (!searchText) return items;
 
-      const newValue = e.target.value.trim();
-      // If multiline, handle that separately
-      if (newValue.includes('\n')) {
-        // Split by lines
-        const lines = newValue.split('\n').map(line => line.trim()).filter(Boolean);
-        addMultipleTodos(lines);
-      } else {
-        addTodo(newValue);
+    return items.filter(item => 
+      item.text.toLowerCase().includes(searchText.toLowerCase())
+    );
+  }, [columnSearch]);
+
+  // Update useEffect dependencies
+  useEffect(() => {
+    if (!isUndoingRef.current) {
+      saveToLocalStorage(columns);
+    }
+  }, [columns, saveToLocalStorage, isUndoingRef]);
+
+  // Update history when columns change
+  useEffect(() => {
+    if (!isUndoingRef.current) {
+      setHistory(prev => [...prev, JSON.stringify(columns)]);
+    }
+  }, [columns]);
+
+  // Handle undo
+  const handleUndo = useCallback(() => {
+    setHistory(prev => {
+      if (prev.length < 2) return prev; // Need at least 2 items to undo (current + previous)
+      
+      const newHistory = prev.slice(0, -1);
+      isUndoingRef.current = true;
+      
+      // Restore the previous state
+      const previousState = JSON.parse(newHistory[newHistory.length - 1]);
+      setColumns(previousState);
+      
+      // Reset the undo flag after a short delay
+      setTimeout(() => {
+        isUndoingRef.current = false;
+      }, 0);
+      
+      return newHistory;
+    });
+  }, [setColumns]);
+
+  // Add keyboard shortcut for undo
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
+        e.preventDefault();
+        handleUndo();
       }
+    };
 
-      // Clear input
-      e.target.value = '';
-    }
-  };
-
-  // Handle paste of multiple lines
-  const handlePaste = (e) => {
-    const pastedText = e.clipboardData.getData('Text');
-    if (pastedText && pastedText.includes('\n')) {
-      e.preventDefault();
-      const lines = pastedText.split('\n').map(line => line.trim()).filter(Boolean);
-      addMultipleTodos(lines);
-    }
-  };
-
-  const addMultipleTodos = (lines) => {
-    setColumns(prev => {
-      const newDoColumn = { ...prev.do };
-      lines.forEach(line => {
-        newDoColumn.items.push({
-          id: `id-${Date.now()}-${Math.random()}`,
-          text: line,
-        });
-      });
-      return {
-        ...prev,
-        do: newDoColumn,
-      };
-    });
-  };
-
-  // Add single to-do
-  const addTodo = (text) => {
-    setColumns((prev) => {
-      const newDoColumn = { ...prev.do };
-      newDoColumn.items = [
-        ...newDoColumn.items,
-        {
-          id: `id-${Date.now()}-${Math.random()}`,
-          text,
-        },
-      ];
-      return {
-        ...prev,
-        do: newDoColumn,
-      };
-    });
-  };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleUndo]);
 
   // Handle item selection
   const toggleSelection = (itemId, e) => {
@@ -423,124 +395,316 @@ function App() {
   }, [selectedIds]);
 
   // Get the next column in sequence
-  const getNextColumnId = (currentColumnId) => {
+  const getNextColumnId = useCallback((currentColumnId) => {
     const currentIndex = COLUMN_SEQUENCE.indexOf(currentColumnId);
     return COLUMN_SEQUENCE[(currentIndex + 1) % COLUMN_SEQUENCE.length];
-  };
+  }, []);
 
   // Get the previous column in sequence
-  const getPreviousColumnId = (currentColumnId) => {
+  const getPreviousColumnId = useCallback((currentColumnId) => {
     const currentIndex = COLUMN_SEQUENCE.indexOf(currentColumnId);
     return COLUMN_SEQUENCE[(currentIndex - 1 + COLUMN_SEQUENCE.length) % COLUMN_SEQUENCE.length];
-  };
+  }, []);
 
-  // Validate and sanitize item text
-  const sanitizeItemText = (text) => {
-    if (typeof text !== 'string') return '';
-    return text.trim().slice(0, 1000); // Limit length to 1000 chars
-  };
+  // Enter edit mode for item
+  const startEditItem = useCallback((item) => {
+    notifyTipAction('click-edit');
+  }, [notifyTipAction]);
 
-  // Update moveToNextColumn with validation
-  const moveToNextColumn = (currentColumnId, itemIds, moveBackward = false) => {
-    try {
-      // Validate parameters
-      if (!COLUMN_SEQUENCE.includes(currentColumnId)) {
-        throw new Error(`Invalid column ID: ${currentColumnId}`);
+  // Helper to find nearest column in drag direction
+  const findNearestColumn = useCallback((source, dragEndClient) => {
+    if (!dragStartPos.current || !dragEndClient) return null;
+
+    // Calculate total drag movement
+    const dragDelta = {
+      x: dragEndClient.x - dragStartPos.current.x,
+      y: dragEndClient.y - dragStartPos.current.y
+    };
+
+    // Reduce minimum drag threshold
+    if (Math.abs(dragDelta.x) < 2) return null;
+
+    // Get container offset
+    const container = document.querySelector('.columns');
+    if (!container) return null;
+
+    // Get all column elements with adjusted positions
+    const columns = COLUMN_SEQUENCE.map(id => ({
+      id,
+      element: document.getElementById(`column-${id}`),
+      rect: document.getElementById(`column-${id}`).getBoundingClientRect()
+    })).filter(col => col.element);
+
+    // Get source column info
+    const sourceCol = columns.find(col => col.id === source);
+    if (!sourceCol) return null;
+
+    // Determine drag direction
+    const isDraggingRight = dragDelta.x > 0;
+
+    // Filter columns based on direction and adjusted positions
+    const possibleTargets = columns.filter(col => {
+      if (isDraggingRight) {
+        return dragEndClient.x >= col.rect.left && col.id !== source;
+      } else {
+        return dragEndClient.x <= col.rect.right && col.id !== source;
       }
-      if (!Array.isArray(itemIds) || itemIds.length === 0) {
-        throw new Error('Invalid item IDs');
-      }
+    });
 
-      const targetColumnId = moveBackward ? 
-        getPreviousColumnId(currentColumnId) : 
-        getNextColumnId(currentColumnId);
+    if (possibleTargets.length === 0) return null;
+
+    // Find nearest column based on distance to drag point
+    return possibleTargets.reduce((nearest, current) => {
+      if (!nearest) return current;
+
+      const nearestDist = Math.min(
+        Math.abs(nearest.rect.left - dragEndClient.x),
+        Math.abs(nearest.rect.right - dragEndClient.x)
+      );
       
-      // If moving to DONE column, trigger blink
-      if (targetColumnId === 'done') {
-        setDoneBlinking(true);
-        setTimeout(() => setDoneBlinking(false), 500);
-      }
+      const currentDist = Math.min(
+        Math.abs(current.rect.left - dragEndClient.x),
+        Math.abs(current.rect.right - dragEndClient.x)
+      );
 
-      setColumns(prev => {
-        if (!prev || !prev[targetColumnId]) return prev;
+      return currentDist < nearestDist ? current : nearest;
+    }).id;
+  }, []);
 
-        const updated = { ...prev };
-        const itemsToMove = [];
-        const now = new Date().toISOString();
-
-        // Remove items from their current columns
-        Object.keys(updated).forEach(columnId => {
-          if (!updated[columnId]) return;
-
-          const column = updated[columnId];
-          const [selected, remaining] = column.items.reduce(
-            ([sel, rem], item) => {
-              if (itemIds.includes(item.id)) {
-                return [[...sel, item], rem];
-              }
-              return [sel, [...rem, item]];
-            },
-            [[], []]
-          );
-          itemsToMove.push(...selected);
-          updated[columnId] = {
-            ...column,
-            items: remaining
-          };
-        });
-
-        // Process timestamps for moved items
-        const processedItems = itemsToMove.map(item => ({
-          ...item,
-          completedAt: targetColumnId === 'done' ? 
-            (item.completedAt || now) : undefined
-        }));
-
-        // Add items to target column
-        const targetColumn = updated[targetColumnId];
-        updated[targetColumnId] = {
-          ...targetColumn,
-          items: targetColumnId === 'done' 
-            ? [...processedItems, ...targetColumn.items]
-            : [...targetColumn.items, ...processedItems]
-        };
-
-        return updated;
-      });
-
-      notifyTipAction('cmd-click-move');
-    } catch (error) {
-      console.error('Error moving items:', error);
+  // Handle migration completion
+  const handleMigrationComplete = useCallback(() => {
+    if (initialState.current.needsMigration && initialState.current.oldData) {
+      const migrated = migrateData(initialState.current.oldData, initialState.current.oldData.version);
+      setColumns(migrated.columns);
+      saveToLocalStorage(migrated.columns);
     }
+    setIsMigrating(false);
+  }, [saveToLocalStorage]);
+
+  // Show migration overlay if needed
+  useEffect(() => {
+    if (initialState.current.needsMigration) {
+      setIsMigrating(true);
+    }
+  }, []);
+
+  // Toggle between DO and DONE
+  const toggleDoDone = () => {
+    setShowDone(prev => !prev);
   };
 
-  // Function to handle search
-  const handleColumnSearch = (columnId, searchText) => {
+  // Toggle between OTHERS and IGNORE
+  const toggleOthersIgnore = () => {
+    setShowIgnore(prev => !prev);
+    setIgnoreBlinking(true);
+    setTimeout(() => setIgnoreBlinking(false), 500);
+  };
+
+  // Update column search handling
+  const handleColumnSearch = useCallback((columnId, searchText) => {
     setColumnSearch(prev => ({
       ...prev,
       [columnId]: searchText.toLowerCase()
     }));
     notifyTipAction('column-search');
-  };
+  }, [notifyTipAction]);
 
-  // Function to filter items based on search
-  const filterItems = (items, columnId) => {
-    const searchText = columnSearch[columnId];
-    if (!searchText) return items;
+  // Handle arrow key navigation
+  const handleArrowNavigation = useCallback((e) => {
+    // Only handle arrow keys when not in an input field
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      
+    const currentColumn = getEffectiveColumn();
+    if (!currentColumn) return;
 
-    return items.filter(item => 
-      item.text.toLowerCase().includes(searchText)
+    if (['ArrowUp', 'ArrowDown'].includes(e.key)) {
+        e.preventDefault();
+      
+      // Get visible items in current column
+      const currentItems = filterItems(columns[currentColumn].items, currentColumn);
+      const currentIndex = focusedItemId 
+        ? currentItems.findIndex(item => item.id === focusedItemId)
+        : -1;
+      
+      switch (e.key) {
+        case 'ArrowUp': {
+          if (currentIndex > 0) {
+            setFocusedItemId(currentItems[currentIndex - 1].id);
+          } else if (currentIndex === -1 && currentItems.length > 0) {
+            setFocusedItemId(currentItems[currentItems.length - 1].id);
+          }
+          break;
+        }
+        case 'ArrowDown': {
+          if (currentIndex < currentItems.length - 1) {
+            setFocusedItemId(currentItems[currentIndex + 1].id);
+          } else if (currentIndex === -1 && currentItems.length > 0) {
+            setFocusedItemId(currentItems[0].id);
+          }
+          break;
+        }
+        default:
+          break;
+      }
+    }
+  }, [columns, focusedItemId, getEffectiveColumn, filterItems]);
+
+  // Add keyboard event listener for arrow navigation
+  useEffect(() => {
+    window.addEventListener('keydown', handleArrowNavigation);
+    return () => window.removeEventListener('keydown', handleArrowNavigation);
+  }, [handleArrowNavigation]);
+
+  // Clear focused item when column changes
+  useEffect(() => {
+    setFocusedItemId(null);
+  }, [hoveredColumn, keyboardFocusedColumn]);
+
+  // Update renderDraggableItem to show focus state
+  const renderDraggableItem = (provided, snapshot, item, columnId) => (
+    <div
+      ref={provided.innerRef}
+      {...provided.draggableProps}
+      {...provided.dragHandleProps}
+      className={`todo-item-wrapper ${selectedIds.includes(item.id) ? 'selected' : ''} ${focusedItemId === item.id ? 'keyboard-focused' : ''}`}
+      data-id={item.id}
+    >
+      <SelectableItem
+        item={item}
+        isSelected={selectedIds.includes(item.id)}
+        isFocused={focusedItemId === item.id}
+        onClick={(e) => {
+          if (e.shiftKey) {
+            toggleSelection(item.id, e);
+          } else if (e.metaKey || e.ctrlKey) {
+            // Command/Ctrl+click to move to DONE from any column
+            if (columnId !== 'done') {
+              setDoneBlinking(true);
+              setTimeout(() => setDoneBlinking(false), 500);
+              
+          setColumns(prev => {
+            const updated = { ...prev };
+                const now = new Date().toISOString();
+                
+                // Remove item from current column
+                const sourceColumn = { ...updated[columnId] };
+                const [movedItem] = sourceColumn.items.filter(i => i.id === item.id);
+                sourceColumn.items = sourceColumn.items.filter(i => i.id !== item.id);
+                updated[columnId] = sourceColumn;
+
+                // Add to DONE column with timestamp
+                const doneColumn = { ...updated.done };
+                doneColumn.items = [
+                  { ...movedItem, completedAt: now },
+                  ...doneColumn.items
+                ];
+                updated.done = doneColumn;
+            
+            return updated;
+          });
+              setSelectedIds([]);
+              notifyTipAction('cmd-click-move');
+            }
+          } else {
+            // Regular click just focuses the item
+            setFocusedItemId(item.id);
+          }
+        }}
+        columnId={columnId}
+      />
+    </div>
+  );
+
+  // Restore handleQuickAddKeyDown
+  const handleQuickAddKeyDown = useCallback((e, columnId) => {
+    if (e.key === 'Enter' || (e.key === 'Tab' && e.target.value.trim() === '')) {
+      e.preventDefault();
+      try {
+        const sanitizedText = sanitizeItemText(e.target.value);
+        if (sanitizedText) {
+          setColumns(prev => {
+            const updated = { ...prev };
+            const newItem = {
+              id: `id-${Date.now()}-${Math.random()}`,
+              text: sanitizedText,
+              completedAt: columnId === 'done' ? new Date().toISOString() : undefined
+            };
+            
+            updated[columnId] = {
+              ...updated[columnId],
+              items: columnId === 'done' 
+                ? [newItem, ...updated[columnId].items]
+                : [...updated[columnId].items, newItem]
+            };
+            
+            return updated;
+          });
+        }
+          e.target.value = '';
+        if (e.key === 'Tab' && e.target.value.trim() === '') {
+          const nextColumnId = getNextColumnId(columnId);
+          setQuickAddColumn(nextColumnId);
+        }
+      } catch (error) {
+        console.error('Error adding item:', error);
+      }
+    } else if (e.key === 'Backspace' && e.target.value === '') {
+      const prevColumnId = getPreviousColumnId(columnId);
+      const prevColumn = columns[prevColumnId];
+      if (prevColumn && prevColumn.items.length > 0) {
+        const lastItem = prevColumn.items[prevColumn.items.length - 1];
+        startEditItem(lastItem);
+        setQuickAddColumn(null);
+      }
+    }
+  }, [columns, sanitizeItemText, getNextColumnId, getPreviousColumnId, startEditItem]);
+
+  // Restore handleQuickAddBlur
+  const handleQuickAddBlur = useCallback((e) => {
+    const sanitizedText = sanitizeItemText(e.target.value);
+    if (sanitizedText && quickAddColumn) {
+      setColumns(prev => {
+        const updated = { ...prev };
+        const newItem = {
+          id: `id-${Date.now()}-${Math.random()}`,
+          text: sanitizedText,
+          completedAt: quickAddColumn === 'done' ? new Date().toISOString() : undefined
+        };
+        
+        updated[quickAddColumn] = {
+          ...updated[quickAddColumn],
+          items: quickAddColumn === 'done' 
+            ? [newItem, ...updated[quickAddColumn].items]
+            : [...updated[quickAddColumn].items, newItem]
+        };
+        
+        return updated;
+      });
+    }
+    setQuickAddColumn(null);
+  }, [quickAddColumn, sanitizeItemText]);
+
+  // Restore renderQuickAddInput
+  const renderQuickAddInput = useCallback((columnId) => {
+    if (quickAddColumn !== columnId) return null;
+
+    return (
+      <input
+        className="quick-add-input"
+        autoFocus
+        placeholder="Type and press Enter to add"
+        onBlur={handleQuickAddBlur}
+        onKeyDown={(e) => handleQuickAddKeyDown(e, columnId)}
+        onClick={(e) => e.stopPropagation()} // Prevent click from bubbling
+        style={{
+          position: 'relative',
+          display: 'inline-block',
+          minWidth: '50px',
+          maxWidth: 'calc(100% - 32px)'
+        }}
+      />
     );
-  };
-
-  // Function to handle exiting search mode
-  const exitSearch = (columnId) => {
-    setSearchingColumn(null);
-    setColumnSearch(prev => ({
-      ...prev,
-      [columnId]: ''
-    }));
-  };
+  }, [quickAddColumn, handleQuickAddBlur, handleQuickAddKeyDown]);
 
   // Restore Cmd+A functionality
   useEffect(() => {
@@ -593,140 +757,38 @@ function App() {
       window.removeEventListener('keypress', handleGlobalKeyPress);
       window.removeEventListener('keydown', handleGlobalKeyDown);
     };
-  }, [getEffectiveColumn, columns, notifyTipAction]);
+  }, [getEffectiveColumn, columns, notifyTipAction, setSelectedIds]);
 
-  // Handle quick-add input events
-  const handleQuickAddKeyDown = useCallback((e, columnId) => {
-    if (e.key === 'Enter' || (e.key === 'Tab' && e.target.value.trim() === '')) {
-      e.preventDefault();
-      try {
-        const sanitizedText = sanitizeItemText(e.target.value);
-        if (sanitizedText) {
-          setColumns(prev => {
-            const updated = { ...prev };
-            const newItem = {
-              id: `id-${Date.now()}-${Math.random()}`,
-              text: sanitizedText,
-              completedAt: columnId === 'done' ? new Date().toISOString() : undefined
-            };
-            
-            updated[columnId] = {
-              ...updated[columnId],
-              items: columnId === 'done' 
-                ? [newItem, ...updated[columnId].items]
-                : [...updated[columnId].items, newItem]
-            };
-            
-            return updated;
-          });
-        }
-        e.target.value = '';
-        if (e.key === 'Tab' && e.target.value.trim() === '') {
-          // Only move to next column if tab was pressed on empty input
-          const nextColumnId = getNextColumnId(columnId);
-          setQuickAddColumn(nextColumnId);
-        }
-      } catch (error) {
-        console.error('Error adding item:', error);
-      }
-    } else if (e.key === 'Tab' && e.target.value.trim() !== '') {
-      // If tab with text, add the item but stay in same column
-      e.preventDefault();
-      try {
-        const sanitizedText = sanitizeItemText(e.target.value);
-        if (sanitizedText) {
-          setColumns(prev => {
-            const updated = { ...prev };
-            const newItem = {
-              id: `id-${Date.now()}-${Math.random()}`,
-              text: sanitizedText,
-              completedAt: columnId === 'done' ? new Date().toISOString() : undefined
-            };
-            
-            updated[columnId] = {
-              ...updated[columnId],
-              items: columnId === 'done' 
-                ? [newItem, ...updated[columnId].items]
-                : [...updated[columnId].items, newItem]
-            };
-            
-            return updated;
-          });
-          e.target.value = '';
-        }
-      } catch (error) {
-        console.error('Error adding item:', error);
-      }
-    } else if (e.key === 'Backspace' && e.target.value === '') {
-      // If backspace is pressed on empty input, try to edit the last item in the column above
-      const prevColumnId = getPreviousColumnId(columnId);
-      const prevColumn = columns[prevColumnId];
-      if (prevColumn && prevColumn.items.length > 0) {
-        const lastItem = prevColumn.items[prevColumn.items.length - 1];
-        startEditItem(lastItem);
-        setQuickAddColumn(null);
-      }
-    }
-  }, [columns, getNextColumnId, getPreviousColumnId, sanitizeItemText]);
-
-  // Handle quick-add input blur
-  const handleQuickAddBlur = useCallback((e) => {
-    const sanitizedText = sanitizeItemText(e.target.value);
-    if (sanitizedText && quickAddColumn) {
-      setColumns(prev => {
-        const updated = { ...prev };
-        const newItem = {
-          id: `id-${Date.now()}-${Math.random()}`,
-          text: sanitizedText,
-          completedAt: quickAddColumn === 'done' ? new Date().toISOString() : undefined
-        };
-        
-        updated[quickAddColumn] = {
-          ...updated[quickAddColumn],
-          items: quickAddColumn === 'done' 
-            ? [newItem, ...updated[quickAddColumn].items]
-            : [...updated[quickAddColumn].items, newItem]
-        };
-        
-        return updated;
-      });
-    }
-    setQuickAddColumn(null);
-  }, [quickAddColumn, sanitizeItemText]);
-
-  // Clean up states when unmounting or when drag starts
+  // Add keyboard event listeners for cut/copy/paste and tab navigation
   useEffect(() => {
-    if (isDragging) {
-      setQuickAddColumn(null);
-    }
-  }, [isDragging]);
-
-  // Update useEffect to use the new save function
-  useEffect(() => {
-    saveToLocalStorage(columns);
-  }, [columns]);
-
-  // Update the quick-add input rendering
-  const renderQuickAddInput = useCallback((columnId) => {
-    if (quickAddColumn !== columnId) return null;
-
-    return (
-      <input
-        className="quick-add-input"
-        autoFocus
-        placeholder="Type and press Enter to add"
-        onBlur={handleQuickAddBlur}
-        onKeyDown={(e) => handleQuickAddKeyDown(e, columnId)}
-        onClick={(e) => e.stopPropagation()} // Prevent click from bubbling
-        style={{
-          position: 'relative',
-          display: 'inline-block',
-          minWidth: '50px',
-          maxWidth: 'calc(100% - 32px)'
-        }}
-      />
-    );
-  }, [quickAddColumn, handleQuickAddBlur, handleQuickAddKeyDown]);
+    const handleKeyDown = (e) => {
+      // Ignore if we're in an input field or textarea
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        
+        const currentColumn = getEffectiveColumn() || COLUMN_SEQUENCE[0];
+        const currentIndex = COLUMN_SEQUENCE.indexOf(currentColumn);
+        
+        // Calculate next column index based on shift key
+        const nextIndex = e.shiftKey
+          ? (currentIndex - 1 + COLUMN_SEQUENCE.length) % COLUMN_SEQUENCE.length
+          : (currentIndex + 1) % COLUMN_SEQUENCE.length;
+        
+        setKeyboardFocusedColumn(COLUMN_SEQUENCE[nextIndex]);
+        
+        // Scroll the column into view if needed
+        const columnElement = document.getElementById(`column-${COLUMN_SEQUENCE[nextIndex]}`);
+        if (columnElement) {
+          columnElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [getEffectiveColumn]);
 
   // Handle copy operation
   const handleCopy = useCallback(() => {
@@ -804,31 +866,13 @@ function App() {
     notifyTipAction('paste');
   }, [clipboard, getEffectiveColumn, isCut, notifyTipAction]);
 
-  // Add keyboard event listeners for cut/copy/paste and tab navigation
+  // Add keyboard event listeners for cut/copy/paste
   useEffect(() => {
     const handleKeyDown = (e) => {
       // Ignore if we're in an input field or textarea
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
       
-      if (e.key === 'Tab') {
-        e.preventDefault();
-        
-        const currentColumn = getEffectiveColumn() || COLUMN_SEQUENCE[0];
-        const currentIndex = COLUMN_SEQUENCE.indexOf(currentColumn);
-        
-        // Calculate next column index based on shift key
-        const nextIndex = e.shiftKey
-          ? (currentIndex - 1 + COLUMN_SEQUENCE.length) % COLUMN_SEQUENCE.length
-          : (currentIndex + 1) % COLUMN_SEQUENCE.length;
-        
-        setKeyboardFocusedColumn(COLUMN_SEQUENCE[nextIndex]);
-        
-        // Scroll the column into view if needed
-        const columnElement = document.getElementById(`column-${COLUMN_SEQUENCE[nextIndex]}`);
-        if (columnElement) {
-          columnElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        }
-      } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey) {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey) {
         switch (e.key.toLowerCase()) {
           case 'x':
             e.preventDefault();
@@ -850,255 +894,7 @@ function App() {
     
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleCut, handleCopy, handleClipboardPaste, getEffectiveColumn]);
-
-  // Deleting a single item by ID
-  const deleteItem = (colId, itemId) => {
-    setColumns((prev) => {
-      const col = { ...prev[colId] };
-      col.items = col.items.filter((item) => item.id !== itemId);
-      return { ...prev, [colId]: col };
-    });
-    // Also clear from selected if it was selected
-    setSelectedIds((prevSelected) => prevSelected.filter((id) => id !== itemId));
-  };
-
-  // Enter edit mode for item
-  const startEditItem = (item) => {
-    setEditItemId(item.id);
-    notifyTipAction('click-edit');
-  };
-
-  // Save changes to an edited item
-  const saveEditItem = (colId, itemId, newText) => {
-    if (!newText.trim()) {
-      // if new text is empty, consider it a delete
-      deleteItem(colId, itemId);
-      setEditItemId(null);
-      return;
-    }
-    setColumns((prev) => {
-      const col = { ...prev[colId] };
-      col.items = col.items.map((item) =>
-        item.id === itemId ? { ...item, text: newText } : item
-      );
-      return {
-        ...prev,
-        [colId]: col,
-      };
-    });
-    setEditItemId(null);
-  };
-
-  // Helper to find nearest column in drag direction
-  const findNearestColumn = useCallback((source, dragEndClient) => {
-    if (!dragStartPos.current || !dragEndClient) return null;
-
-    // Calculate total drag movement
-    const dragDelta = {
-      x: dragEndClient.x - dragStartPos.current.x,
-      y: dragEndClient.y - dragStartPos.current.y
-    };
-
-    // Reduce minimum drag threshold
-    if (Math.abs(dragDelta.x) < 2) return null;
-
-    // Get container offset
-    const container = document.querySelector('.columns');
-    if (!container) return null;
-
-    // Get all column elements with adjusted positions
-    const columns = COLUMN_SEQUENCE.map(id => ({
-      id,
-      element: document.getElementById(`column-${id}`),
-      rect: document.getElementById(`column-${id}`).getBoundingClientRect()
-    })).filter(col => col.element);
-
-    // Get source column info
-    const sourceCol = columns.find(col => col.id === source);
-    if (!sourceCol) return null;
-
-    // Determine drag direction
-    const isDraggingRight = dragDelta.x > 0;
-
-    // Filter columns based on direction and adjusted positions
-    const possibleTargets = columns.filter(col => {
-      if (isDraggingRight) {
-        return dragEndClient.x >= col.rect.left && col.id !== source;
-      } else {
-        return dragEndClient.x <= col.rect.right && col.id !== source;
-      }
-    });
-
-    if (possibleTargets.length === 0) return null;
-
-    // Find nearest column based on distance to drag point
-    return possibleTargets.reduce((nearest, current) => {
-      if (!nearest) return current;
-
-      const nearestDist = Math.min(
-        Math.abs(nearest.rect.left - dragEndClient.x),
-        Math.abs(nearest.rect.right - dragEndClient.x)
-      );
-      
-      const currentDist = Math.min(
-        Math.abs(current.rect.left - dragEndClient.x),
-        Math.abs(current.rect.right - dragEndClient.x)
-      );
-
-      return currentDist < nearestDist ? current : nearest;
-    }).id;
-  }, []);
-
-  // Grid overlay component
-  const GridOverlay = () => {
-    const cells = [];
-    for (let row = 0; row < 20; row++) {
-      for (let col = 0; col < 20; col++) {
-        cells.push(
-          <div
-            key={`${row}-${col}`}
-            className="grid-cell"
-            data-coord={`${row},${col}`}
-          />
-        );
-      }
-    }
-    return <div className="grid-overlay">{cells}</div>;
-  };
-
-  // Update history when columns change
-  useEffect(() => {
-    if (!isUndoingRef.current) {
-      setHistory(prev => [...prev, JSON.stringify(columns)]);
-    }
-  }, [columns]);
-
-  // Handle undo
-  const handleUndo = useCallback(() => {
-    setHistory(prev => {
-      if (prev.length < 2) return prev; // Need at least 2 items to undo (current + previous)
-      
-      const newHistory = prev.slice(0, -1);
-      isUndoingRef.current = true;
-      
-      // Restore the previous state
-      const previousState = JSON.parse(newHistory[newHistory.length - 1]);
-      setColumns(previousState);
-      
-      // Reset the undo flag after a short delay
-      setTimeout(() => {
-        isUndoingRef.current = false;
-      }, 0);
-      
-      return newHistory;
-    });
-  }, [setColumns]);
-
-  // Add keyboard shortcut for undo
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
-        e.preventDefault();
-        handleUndo();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleUndo]);
-
-  // Handle migration completion
-  const handleMigrationComplete = useCallback(() => {
-    if (initialState.current.needsMigration && initialState.current.oldData) {
-      const migrated = migrateData(initialState.current.oldData, initialState.current.oldData.version);
-      setColumns(migrated.columns);
-      saveToLocalStorage(migrated.columns);
-    }
-    setIsMigrating(false);
-  }, []);
-
-  // Show migration overlay if needed
-  useEffect(() => {
-    if (initialState.current.needsMigration) {
-      setIsMigrating(true);
-    }
-  }, []);
-
-  // Toggle between DO and DONE
-  const toggleDoDone = () => {
-    setShowDone(prev => !prev);
-  };
-
-  // Render draggable item
-  const renderDraggableItem = (provided, snapshot, item, columnId) => (
-    <div
-      ref={provided.innerRef}
-      {...provided.draggableProps}
-      {...provided.dragHandleProps}
-      className={selectedIds.includes(item.id) ? 'selected' : ''}
-      style={{
-        ...provided.draggableProps.style,
-        opacity: snapshot.isDragging ? 0.8 : 1,
-      }}
-    >
-      {editItemId === item.id ? (
-        <EditableItem
-          item={item}
-          onSave={(newText) => saveEditItem(columnId, item.id, newText)}
-          onCancel={() => setEditItemId(null)}
-        />
-      ) : (
-        <SelectableItem
-          todo={item}
-          isSelected={selectedIds.includes(item.id)}
-          onClick={(e) => {
-            if (e.shiftKey) {
-              toggleSelection(item.id, e);
-            } else if (e.metaKey || e.ctrlKey) {
-              // Command/Ctrl+click to edit
-              startEditItem(item);
-            } else if (!isRbdDragging) {
-              // Regular click moves to DONE from any column
-              if (columnId !== 'done') {
-                // Set the blink effect
-                setDoneBlinking(true);
-                setTimeout(() => setDoneBlinking(false), 500);
-                
-                // Move the item to DONE
-                setColumns(prev => {
-                  const updated = { ...prev };
-                  const now = new Date().toISOString();
-                  
-                  // Remove item from current column
-                  const sourceColumn = { ...updated[columnId] };
-                  const [movedItem] = sourceColumn.items.filter(i => i.id === item.id);
-                  sourceColumn.items = sourceColumn.items.filter(i => i.id !== item.id);
-                  updated[columnId] = sourceColumn;
-
-                  // Add to DONE column with timestamp
-                  const doneColumn = { ...updated.done };
-                  doneColumn.items = [
-                    { ...movedItem, completedAt: now },
-                    ...doneColumn.items
-                  ];
-                  updated.done = doneColumn;
-
-                  return updated;
-                });
-                setSelectedIds([]);
-              }
-            }
-          }}
-          onDoubleClick={() => {
-            // Remove double click since single click moves to DONE
-            return;
-          }}
-          columnId={columnId}
-        />
-      )}
-    </div>
-  );
+  }, [handleCut, handleCopy, handleClipboardPaste]);
 
   return (
     <>
@@ -1106,7 +902,6 @@ function App() {
       <DragDropContext 
         onDragStart={(start) => {
           setIsRbdDragging(true);
-          // Store initial drag position
           if (start.client) {
             dragStartPos.current = start.client;
           }
@@ -1188,13 +983,6 @@ function App() {
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
         >
-          <button 
-            className="toggle-grid" 
-            onClick={() => setShowGrid(!showGrid)}
-          >
-            {showGrid ? 'Hide Grid' : 'Show Grid'}
-          </button>
-          {showGrid && <GridOverlay />}
           <ProTipTooltip onAction={setTipActionHandler} />
           
           {/* Show selection box while dragging but not during item drag */}
@@ -1211,17 +999,6 @@ function App() {
             />
           )}
           
-          {/* Center input area */}
-          <div className="input-area">
-            <textarea
-              ref={inputRef}
-              placeholder="Type a todo and press Enter (or paste multiple lines)"
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              rows={3}
-            />
-          </div>
-
           <div className="columns">
             {/* DO/DONE Column */}
             <div 
@@ -1241,6 +1018,12 @@ function App() {
                   </>
                 )}
               </h2>
+              <input
+                className="column-search"
+                placeholder="Search..."
+                value={columnSearch[showDone ? 'done' : 'do']}
+                onChange={(e) => handleColumnSearch(showDone ? 'done' : 'do', e.target.value)}
+              />
               <StrictModeDroppable droppableId={showDone ? 'done' : 'do'}>
                 {(provided, snapshot) => (
                   <div
@@ -1273,84 +1056,56 @@ function App() {
               </StrictModeDroppable>
             </div>
 
-            {/* IGNORE Column */}
+            {/* OTHERS/IGNORE Column */}
             <div 
-              className={`column ${keyboardFocusedColumn === 'ignore' ? 'keyboard-focused' : ''}`}
+              className={`column ${keyboardFocusedColumn === (showIgnore ? 'ignore' : 'others') ? 'keyboard-focused' : ''}`}
             >
               <h2 
-                onClick={() => setSearchingColumn('ignore')}
-                className={getEffectiveColumn() === 'ignore' ? 'hovered' : ''}
+                onClick={toggleOthersIgnore}
+                className={getEffectiveColumn() === (showIgnore ? 'ignore' : 'others') ? 'hovered' : ''}
               >
-                IGNORE
-              </h2>
-              <StrictModeDroppable droppableId="ignore">
-                {(provided, snapshot) => (
-                  <div
-                    id="column-ignore"
-                    ref={provided.innerRef}
-                    {...provided.droppableProps}
-                    className={`droppable-area ${snapshot.isDraggingOver ? 'dragging-over' : ''}`}
-                    onMouseEnter={() => handleColumnHover('ignore')}
-                    onMouseLeave={() => handleColumnHover(null)}
-                  >
-                    {filterItems(columns.ignore.items, 'ignore').map((item, index) => (
-                      <Draggable 
-                        key={item.id} 
-                        draggableId={item.id} 
-                        index={index}
-                      >
-                        {(provided, snapshot) => renderDraggableItem(provided, snapshot, item, 'ignore')}
-                      </Draggable>
-                    ))}
-                    {getEffectiveColumn() === 'ignore' && !quickAddColumn && (
-                      <div 
-                        className="cursor-line"
-                        onClick={() => setQuickAddColumn('ignore')}
-                      />
-                    )}
-                    {renderQuickAddInput('ignore')}
-                    {provided.placeholder}
-                  </div>
+                {showIgnore ? (
+                  <>
+                    <span className="ignore-text">OTHERS</span> / <span className={ignoreBlinking ? 'blink-ignore' : ''}>IGNORE</span>
+                  </>
+                ) : (
+                  <>
+                    OTHERS / <span className={`ignore-text ${ignoreBlinking ? 'blink-ignore' : ''}`}>IGNORE</span>
+                  </>
                 )}
-              </StrictModeDroppable>
-            </div>
-
-            {/* OTHERS Column */}
-            <div 
-              className={`column ${keyboardFocusedColumn === 'others' ? 'keyboard-focused' : ''}`}
-            >
-              <h2 
-                onClick={() => setSearchingColumn('others')}
-                className={getEffectiveColumn() === 'others' ? 'hovered' : ''}
-              >
-                OTHERS
               </h2>
-              <StrictModeDroppable droppableId="others">
+              <input
+                className="column-search"
+                placeholder="Search..."
+                value={columnSearch[showIgnore ? 'ignore' : 'others']}
+                onChange={(e) => handleColumnSearch(showIgnore ? 'ignore' : 'others', e.target.value)}
+              />
+              <StrictModeDroppable droppableId={showIgnore ? 'ignore' : 'others'}>
                 {(provided, snapshot) => (
                   <div
-                    id="column-others"
+                    id={`column-${showIgnore ? 'ignore' : 'others'}`}
                     ref={provided.innerRef}
                     {...provided.droppableProps}
                     className={`droppable-area ${snapshot.isDraggingOver ? 'dragging-over' : ''}`}
-                    onMouseEnter={() => handleColumnHover('others')}
+                    onMouseEnter={() => handleColumnHover(showIgnore ? 'ignore' : 'others')}
                     onMouseLeave={() => handleColumnHover(null)}
                   >
-                    {filterItems(columns.others.items, 'others').map((item, index) => (
+                    {filterItems(columns[showIgnore ? 'ignore' : 'others'].items, showIgnore ? 'ignore' : 'others').map((item, index) => (
                       <Draggable 
                         key={item.id} 
                         draggableId={item.id} 
                         index={index}
                       >
-                        {(provided, snapshot) => renderDraggableItem(provided, snapshot, item, 'others')}
+                        {(provided, snapshot) => renderDraggableItem(provided, snapshot, item, showIgnore ? 'ignore' : 'others')}
                       </Draggable>
                     ))}
-                    {getEffectiveColumn() === 'others' && !quickAddColumn && (
+                    {getEffectiveColumn() === (showIgnore ? 'ignore' : 'others') && !quickAddColumn && (
                       <div 
                         className="cursor-line"
-                        onClick={() => setQuickAddColumn('others')}
+                        onClick={() => setQuickAddColumn(showIgnore ? 'ignore' : 'others')}
                       />
                     )}
-                    {renderQuickAddInput('others')}
+                    {renderQuickAddInput(showIgnore ? 'ignore' : 'others')}
                     {provided.placeholder}
                   </div>
                 )}
