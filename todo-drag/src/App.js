@@ -610,6 +610,17 @@ function App() {
             setFocusedItemId(item.id);
           }
         }}
+        onUpdate={(newText) => {
+          setColumns(prev => {
+            const updated = { ...prev };
+            const column = { ...updated[columnId] };
+            column.items = column.items.map(i => 
+              i.id === item.id ? { ...i, text: newText } : i
+            );
+            updated[columnId] = column;
+            return updated;
+          });
+        }}
         columnId={columnId}
       />
     </div>
@@ -1020,7 +1031,7 @@ function App() {
               </h2>
               <input
                 className="column-search"
-                placeholder="Search..."
+                placeholder="🔍"
                 value={columnSearch[showDone ? 'done' : 'do']}
                 onChange={(e) => handleColumnSearch(showDone ? 'done' : 'do', e.target.value)}
               />
@@ -1076,7 +1087,7 @@ function App() {
               </h2>
               <input
                 className="column-search"
-                placeholder="Search..."
+                placeholder="🔍"
                 value={columnSearch[showIgnore ? 'ignore' : 'others']}
                 onChange={(e) => handleColumnSearch(showIgnore ? 'ignore' : 'others', e.target.value)}
               />

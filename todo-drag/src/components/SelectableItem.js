@@ -1,8 +1,27 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 
-const SelectableItem = ({ item, isSelected, isFocused, onClick, columnId }) => {
-  const [isHovered, setIsHovered] = useState(false);
+const SelectableItem = ({ item, isSelected, isFocused, onClick, onUpdate, columnId }) => {
   const [wasJustDragged, setWasJustDragged] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editText, setEditText] = useState('');
+  const inputRef = useRef(null);
+
+  // Set initial edit text when item changes
+  useEffect(() => {
+    if (item && item.text) {
+      setEditText(item.text);
+    }
+  }, [item?.text]);
+
+  // Focus input when editing starts
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus();
+      // Move cursor to end of text
+      const length = inputRef.current.value.length;
+      inputRef.current.setSelectionRange(length, length);
+    }
+  }, [isEditing]);
 
   // Guard against undefined item
   if (!item || !item.id) {
@@ -10,26 +29,50 @@ const SelectableItem = ({ item, isSelected, isFocused, onClick, columnId }) => {
     return null;
   }
 
-  // Format the timestamp to show how long ago
-  const formatTimeAgo = (timestamp) => {
-    const diff = new Date() - new Date(timestamp);
-    const minutes = Math.floor(diff / 60000);
-    const hours = Math.floor(minutes / 60);
-    const days = Math.floor(hours / 24);
-
-    if (days > 0) return `${days}d`;
-    if (hours > 0) return `${hours}h`;
-    return `${minutes}m`;
+  // Format the completion date
+  const formatCompletionDate = (timestamp) => {
+    const completionDate = new Date(timestamp);
+    const currentDate = new Date();
+    const month = completionDate.getMonth() + 1;
+    const day = completionDate.getDate();
+    
+    // Show year only if it's not the current year
+    if (completionDate.getFullYear() !== currentDate.getFullYear()) {
+      return `${month}/${day}/${completionDate.getFullYear().toString().slice(2)}`;
+    }
+    return `${month}/${day}`;
   };
 
   // Handle click events
   const handleClick = (e) => {
-    // If clicking the text directly and we weren't just dragging, treat as edit
-    if (e.target.tagName.toLowerCase() === 'span' && !wasJustDragged) {
-      onClick(e);
+    if (wasJustDragged) {
+      setWasJustDragged(false);
+      return;
     }
-    // Reset the drag state after handling the click
-    setWasJustDragged(false);
+    
+    if (e.shiftKey || e.metaKey || e.ctrlKey) {
+      onClick(e);
+    } else {
+      setIsEditing(true);
+    }
+  };
+
+  // Handle edit completion
+  const handleEditComplete = () => {
+    setIsEditing(false);
+    const trimmedText = editText.trim();
+    if (trimmedText !== item.text && trimmedText !== '') {
+      onUpdate(trimmedText);
+    } else {
+      setEditText(item.text);
+    }
+  };
+
+  // Handle key press in edit mode
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' || e.key === 'Escape') {
+      handleEditComplete();
+    }
   };
 
   return (
@@ -37,8 +80,6 @@ const SelectableItem = ({ item, isSelected, isFocused, onClick, columnId }) => {
       className={`todo-item ${isSelected ? 'selected' : ''} ${isFocused ? 'keyboard-focused' : ''}`}
       data-id={item.id}
       onClick={handleClick}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
       onMouseDown={() => setWasJustDragged(false)}
       onDragEnd={() => setWasJustDragged(true)}
       style={{
@@ -49,9 +90,30 @@ const SelectableItem = ({ item, isSelected, isFocused, onClick, columnId }) => {
         cursor: 'pointer'
       }}
     >
-      <span style={{ pointerEvents: 'auto', cursor: 'text' }}>{item.text}</span>
-      {columnId === 'done' && item.completedAt && isHovered && (
-        <span className="timestamp">{formatTimeAgo(item.completedAt)}</span>
+      {isEditing ? (
+        <input
+          ref={inputRef}
+          type="text"
+          value={editText}
+          onChange={(e) => setEditText(e.target.value)}
+          onBlur={handleEditComplete}
+          onKeyDown={handleKeyDown}
+          className="edit-input"
+          style={{
+            minWidth: '200px',
+            background: 'transparent',
+            padding: '4px 8px',
+            border: 'none',
+            borderRadius: '3px'
+          }}
+        />
+      ) : (
+        <>
+          <span style={{ pointerEvents: 'auto', cursor: 'text' }}>{item.text}</span>
+          {columnId === 'done' && item.completedAt && (
+            <span className="timestamp">{formatCompletionDate(item.completedAt)}</span>
+          )}
+        </>
       )}
     </div>
   );

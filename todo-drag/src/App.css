@@ -45,6 +45,7 @@ body {
   border: 1px solid #333;
   height: 100%;
   overflow: hidden;
+  box-sizing: border-box;
 }
 
 /* Remove hover and focus styles from column borders */
@@ -131,6 +132,7 @@ body {
   border: 1px dashed #333;
   border-radius: 4px;
   margin: 8px;
+  margin-bottom: 16px;
   width: calc(100% - 16px);
   box-sizing: border-box;
   pointer-events: auto !important;
@@ -228,16 +230,20 @@ body {
 }
 
 .timestamp {
-  margin-left: 12px;
-  padding: 2px 6px;
-  opacity: 0.7;
-  font-size: 12px;
+  margin-left: 8px;
+  padding: 1px 4px;
+  opacity: 0.5;
+  font-size: 11px;
   color: #888;
-  background-color: rgba(255, 255, 255, 0.05);
-  border-radius: 3px;
+  background-color: transparent;
+  border-radius: 2px;
   display: inline-block;
-  min-width: 32px;
+  min-width: auto;
   text-align: center;
+}
+
+.todo-item:hover .timestamp {
+  opacity: 0.7;
 }
 
 /* Hide the dragged item during drag */
@@ -354,9 +360,19 @@ body {
   border-bottom: 1px solid #333;
 }
 
+.column-search::placeholder {
+  text-align: left;
+  font-size: 14px;
+  opacity: 0.7;
+}
+
 .column-search:focus {
   outline: none;
   background: #262626;
+}
+
+.column-search:focus::placeholder {
+  opacity: 0;
 }
 
 .todo-item.filtered {
