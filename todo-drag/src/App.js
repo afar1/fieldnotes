@@ -74,17 +74,40 @@ const migrateData = (oldData, oldVersion) => {
   };
 };
 
-// Load initial state from localStorage with versioning
+// Load initial state from localStorage with versioning and enhanced error recovery
 const loadInitialState = () => {
   try {
+    // Try to load from main storage first
     const saved = localStorage.getItem('my-todos');
-    if (!saved) return { ...DEFAULT_STATE, needsMigration: false };
+    let parsed = null;
 
-    const parsed = JSON.parse(saved);
-    if (!parsed || typeof parsed !== 'object') return { ...DEFAULT_STATE, needsMigration: false };
+    if (saved) {
+      try {
+        parsed = JSON.parse(saved);
+      } catch (parseError) {
+        console.error('Error parsing main storage:', parseError);
+        // Try to load from backup
+        const backup = localStorage.getItem('my-todos-backup');
+        if (backup) {
+          try {
+            parsed = JSON.parse(backup);
+            // Restore main storage from backup
+            localStorage.setItem('my-todos', backup);
+          } catch (backupParseError) {
+            console.error('Error parsing backup:', backupParseError);
+          }
+        }
+      }
+    }
+
+    if (!parsed || typeof parsed !== 'object') {
+      console.info('No valid saved data found, starting fresh');
+      return { ...DEFAULT_STATE, needsMigration: false };
+    }
 
     // Check version and migrate if needed
     if (!parsed.version || parsed.version !== CURRENT_VERSION) {
+      console.info(`Data migration needed from version ${parsed.version || 'unknown'} to ${CURRENT_VERSION}`);
       return { 
         ...DEFAULT_STATE,
         columns: parsed.columns || DEFAULT_STATE.columns,
@@ -93,21 +116,39 @@ const loadInitialState = () => {
       };
     }
 
-    // Validate each column's structure
-    const validatedColumns = {
-      do: validateColumnStructure(parsed.columns?.do, DEFAULT_STATE.columns.do),
-      done: validateColumnStructure(parsed.columns?.done, DEFAULT_STATE.columns.done),
-      ignore: validateColumnStructure(parsed.columns?.ignore, DEFAULT_STATE.columns.ignore),
-      others: validateColumnStructure(parsed.columns?.others, DEFAULT_STATE.columns.others)
-    };
+    // Deep validation of column structure
+    const validatedColumns = {};
+    let hasValidationErrors = false;
+
+    for (const [key, defaultColumn] of Object.entries(DEFAULT_STATE.columns)) {
+      try {
+        validatedColumns[key] = validateColumnStructure(parsed.columns?.[key], defaultColumn);
+      } catch (validationError) {
+        console.error(`Validation error in column ${key}:`, validationError);
+        validatedColumns[key] = defaultColumn;
+        hasValidationErrors = true;
+      }
+    }
+
+    // If we had validation errors but recovered, save the cleaned data
+    if (hasValidationErrors) {
+      const cleanedData = {
+        version: CURRENT_VERSION,
+        columns: validatedColumns,
+        lastUpdated: new Date().toISOString()
+      };
+      localStorage.setItem('my-todos', JSON.stringify(cleanedData));
+      localStorage.setItem('my-todos-backup', JSON.stringify(cleanedData));
+    }
 
     return {
       version: CURRENT_VERSION,
       columns: validatedColumns,
-      needsMigration: false
+      needsMigration: false,
+      lastUpdated: parsed.lastUpdated || new Date().toISOString()
     };
   } catch (error) {
-    console.error('Error loading from localStorage:', error);
+    console.error('Critical error loading from localStorage:', error);
     return { ...DEFAULT_STATE, needsMigration: false };
   }
 };
@@ -153,19 +194,45 @@ function App() {
     }
   }, [tipActionHandler]);
 
-  // Save data to localStorage with validation and versioning
+  // Save data to localStorage with validation, versioning, and error handling
   const saveToLocalStorage = useCallback((columns) => {
     try {
       if (!columns || typeof columns !== 'object') {
         throw new Error('Invalid data structure');
       }
+      
+      // Validate all columns before saving
+      Object.entries(columns).forEach(([key, column]) => {
+        if (!column || !column.items || !Array.isArray(column.items)) {
+          throw new Error(`Invalid column structure for ${key}`);
+        }
+      });
+
       const dataToSave = {
         version: CURRENT_VERSION,
-        columns: columns
+        columns: columns,
+        lastUpdated: new Date().toISOString()
       };
-      localStorage.setItem('my-todos', JSON.stringify(dataToSave));
+
+      const serializedData = JSON.stringify(dataToSave);
+      localStorage.setItem('my-todos', serializedData);
+
+      // Optional: Save a backup copy
+      localStorage.setItem('my-todos-backup', serializedData);
+
+      return true;
     } catch (error) {
       console.error('Error saving to localStorage:', error);
+      // Try to save to backup if main save fails
+      try {
+        const backupData = localStorage.getItem('my-todos-backup');
+        if (backupData) {
+          localStorage.setItem('my-todos', backupData);
+        }
+      } catch (backupError) {
+        console.error('Backup recovery failed:', backupError);
+      }
+      return false;
     }
   }, []);
 
@@ -185,11 +252,29 @@ function App() {
     );
   }, [columnSearch]);
 
-  // Update useEffect dependencies
+  // Update useEffect for localStorage with proper cleanup and error handling
   useEffect(() => {
-    if (!isUndoingRef.current) {
-      saveToLocalStorage(columns);
-    }
+    let isMounted = true;
+
+    const saveData = async () => {
+      if (!isUndoingRef.current && isMounted) {
+        const savedSuccessfully = saveToLocalStorage(columns);
+        if (!savedSuccessfully && isMounted) {
+          console.warn('Failed to save to localStorage. Your changes may not persist.');
+          // You could set some state here to show a user-facing error message if desired
+        }
+      }
+    };
+
+    saveData();
+
+    // Attempt to save any pending changes before unmounting
+    return () => {
+      isMounted = false;
+      if (!isUndoingRef.current) {
+        saveToLocalStorage(columns);
+      }
+    };
   }, [columns, saveToLocalStorage, isUndoingRef]);
 
   // Update history when columns change

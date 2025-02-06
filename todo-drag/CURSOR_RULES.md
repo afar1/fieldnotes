@@ -1,5 +1,46 @@
 # Cursor Rules & Meeting Notes
 
+## Meeting Notes Format
+- All meetings must be timestamped with exact date and time
+- Latest meetings appear at the top
+- Use 24-hour format for consistency
+- Include timezone (PST/PDT) for clarity
+
+## Meeting Notes (Date: Feb 6, 2024, 00:17 PST)
+
+### Issues Addressed
+1. Development Server Setup Issues
+   - Initial `npm start` failed with "react-scripts: command not found"
+   - Fixed by performing clean reinstall of dependencies
+   - Removed `node_modules` and `package-lock.json`
+   - Successfully ran `npm install` and `npm start`
+
+2. Package Deprecation Warnings
+   - `react-beautiful-dnd` is deprecated (see: https://github.com/atlassian/react-beautiful-dnd/issues/2672)
+   - Multiple Babel plugins have newer transform versions available
+   - ESLint version needs updating
+
+3. Current ESLint Warnings
+   - `history` variable unused in `App.js`
+   - Missing dependency `item` in `SelectableItem.js` useEffect hook
+   - These warnings don't affect functionality but should be addressed in future updates
+
+### Action Items
+1. Consider alternatives to `react-beautiful-dnd`
+2. Update deprecated Babel plugins to their transform versions
+3. Update ESLint to latest supported version
+4. Fix ESLint warnings in `App.js` and `SelectableItem.js`
+
+### Development Environment Setup
+1. Clean Install Process:
+   ```bash
+   rm -rf node_modules package-lock.json
+   npm install
+   npm start
+   ```
+2. Server runs on http://localhost:3000
+3. Hot reloading enabled for development
+
 ## Meeting Notes (Date: Feb 5, 2024)
 
 ### Issues Addressed
