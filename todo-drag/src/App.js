@@ -6,6 +6,9 @@ import StrictModeDroppable from './components/StrictModeDroppable';
 import SelectableItem from './components/SelectableItem';
 import ProTipTooltip from './components/ProTipTooltip';
 import MigrationOverlay from './components/MigrationOverlay';
+import useQuickAdd from './hooks/useQuickAdd';
+import { useColumnToggles } from './hooks/useColumnToggles';
+import { findNearestColumn, getPreviousColumnId, startEditItem } from './utils/columnUtils';
 
 // Define initial state outside component
 const CURRENT_VERSION = '1.0.1';  // Increment this when data structure changes
@@ -32,11 +35,16 @@ const DEFAULT_STATE = {
       name: 'OTHERS',
       items: [],
     },
+    ember: {
+      id: 'ember',
+      name: 'EMBER',
+      items: [],
+    }
   }
 };
 
 // Column sequence for navigation
-const COLUMN_SEQUENCE = ['do', 'ignore', 'others'];
+const COLUMN_SEQUENCE = ['do', 'ignore', 'others', 'ember'];
 
 // Validate column structure
 const validateColumnStructure = (column, defaultColumn) => {
@@ -48,7 +56,11 @@ const validateColumnStructure = (column, defaultColumn) => {
     items: Array.isArray(column.items) ? column.items.map(item => ({
       id: item.id || `id-${Date.now()}-${Math.random()}`,
       text: typeof item.text === 'string' ? item.text : '',
-      completedAt: item.completedAt || undefined
+      completedAt: item.completedAt || undefined,
+      nextContact: item.nextContact || (column.id === 'ember' ? 
+        new Date(Date.now() + DEFAULT_RECONNECT_DAYS * 24 * 60 * 60 * 1000).toISOString() : 
+        undefined),
+      originalDays: item.originalDays || (column.id === 'ember' ? DEFAULT_RECONNECT_DAYS : undefined)
     })) : defaultColumn.items
   };
 };
@@ -153,6 +165,26 @@ const loadInitialState = () => {
   }
 };
 
+// Add Ember-specific utilities
+const DEFAULT_RECONNECT_DAYS = 30; // Default time until next reconnection
+
+const calculateDaysFromNow = (date) => {
+  const now = new Date();
+  const targetDate = new Date(date);
+  const diffTime = targetDate - now;
+  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+};
+
+const calculateOpacity = (daysFromNow) => {
+  // Scale opacity from 1.0 (today) to 0.2 (furthest date)
+  return Math.max(0.2, Math.min(1.0, 1 - (daysFromNow / (DEFAULT_RECONNECT_DAYS * 2))));
+};
+
+// Add this function before the App component
+const startEmberEdit = (id, setEditingId) => {
+  setEditingId(id);
+};
+
 function App() {
   const [isMigrating, setIsMigrating] = useState(false);
   const initialState = useRef(loadInitialState());
@@ -167,13 +199,13 @@ function App() {
     do: '',
     done: '',
     ignore: '',
-    others: ''
+    others: '',
+    ember: ''  // Add ember search state
   });
   const [history, setHistory] = useState([]);
   const isUndoingRef = useRef(false);
   const dragStartPos = useRef(null);
   
-  const [quickAddColumn, setQuickAddColumn] = useState(null);
   const [hasMoved, setHasMoved] = useState(false);
   const [hoveredColumn, setHoveredColumn] = useState(null);
   const [tipActionHandler, setTipActionHandler] = useState(null);
@@ -186,6 +218,25 @@ function App() {
   const [showIgnore, setShowIgnore] = useState(false);
   const [ignoreBlinking, setIgnoreBlinking] = useState(false);
   const [focusedItemId, setFocusedItemId] = useState(null);
+  const [quickAddColumn, setQuickAddColumn] = useState(null);
+
+  // Add new state for Ember
+  const [emberHighlightedIndex, setEmberHighlightedIndex] = useState(-1);
+
+  // Add new state for Ember editing
+  const [emberEditingId, setEmberEditingId] = useState(null);
+  const emberEditInputRef = useRef(null);
+
+  // Add state for days editing
+  const [emberDaysEditingId, setEmberDaysEditingId] = useState(null);
+  const emberDaysInputRef = useRef(null);
+
+  // Initialize column toggles
+  const { toggleDoDone, toggleOthersIgnore, handleMigrationComplete } = useColumnToggles(
+    setShowDone,
+    setShowIgnore,
+    setIsMigrating
+  );
 
   // Notify tip system of completed actions
   const notifyTipAction = useCallback((action) => {
@@ -193,6 +244,14 @@ function App() {
       tipActionHandler(action);
     }
   }, [tipActionHandler]);
+
+  // Handle column search
+  const handleColumnSearch = useCallback((columnId, searchText) => {
+    setColumnSearch(prev => ({
+      ...prev,
+      [columnId]: searchText
+    }));
+  }, []);
 
   // Save data to localStorage with validation, versioning, and error handling
   const saveToLocalStorage = useCallback((columns) => {
@@ -252,7 +311,258 @@ function App() {
     );
   }, [columnSearch]);
 
-  // Update useEffect for localStorage with proper cleanup and error handling
+  // Handle Ember edit mode
+  const handleEmberEditComplete = useCallback((itemId, newText) => {
+    // Remove items that are empty or just whitespace
+    if (!newText || !newText.trim()) {
+      setColumns(prev => {
+        const updated = { ...prev };
+        const emberColumn = { ...updated.ember };
+        emberColumn.items = emberColumn.items.filter(i => i.id !== itemId);
+        updated.ember = emberColumn;
+        return updated;
+      });
+    } else {
+      setColumns(prev => {
+        const updated = { ...prev };
+        const emberColumn = { ...updated.ember };
+        emberColumn.items = emberColumn.items.map(item => 
+          item.id === itemId ? { ...item, text: newText } : item
+        );
+        updated.ember = emberColumn;
+        return updated;
+      });
+    }
+    setEmberEditingId(null);
+  }, []);
+
+  // Handle Ember reset with original days
+  const handleEmberReset = useCallback((itemId) => {
+    setColumns(prev => {
+      const updated = { ...prev };
+      const emberColumn = { ...updated.ember };
+      emberColumn.items = emberColumn.items.map(item => 
+        item.id === itemId ? 
+          { 
+            ...item, 
+            nextContact: new Date(Date.now() + (item.originalDays || DEFAULT_RECONNECT_DAYS) * 24 * 60 * 60 * 1000).toISOString() 
+          } : 
+          item
+      );
+      updated.ember = emberColumn;
+      return updated;
+    });
+  }, []);
+
+  // Handle days editing with original days storage
+  const handleEmberDaysEditComplete = useCallback((itemId, days) => {
+    setColumns(prev => {
+      const updated = { ...prev };
+      const emberColumn = { ...updated.ember };
+      emberColumn.items = emberColumn.items.map(item => 
+        item.id === itemId ? 
+          { 
+            ...item, 
+            nextContact: new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString(),
+            originalDays: days
+          } : 
+          item
+      );
+      updated.ember = emberColumn;
+      return updated;
+    });
+    setEmberDaysEditingId(null);
+  }, []);
+
+  // Add new Ember contact with original days
+  const handleAddEmberContact = useCallback(() => {
+    const newItemId = `id-${Date.now()}-${Math.random()}`;
+    setColumns(prev => {
+      const updated = { ...prev };
+      const emberColumn = { ...updated.ember };
+      const newItem = {
+        id: newItemId,
+        text: '',
+        nextContact: new Date(Date.now() + DEFAULT_RECONNECT_DAYS * 24 * 60 * 60 * 1000).toISOString(),
+        originalDays: DEFAULT_RECONNECT_DAYS
+      };
+      emberColumn.items = [newItem, ...emberColumn.items];  // Add to the beginning
+      updated.ember = emberColumn;
+      return updated;
+    });
+    // Set editing state and focus input immediately
+    setEmberEditingId(newItemId);
+    // Use a small timeout to ensure the input is rendered
+    setTimeout(() => {
+      if (emberEditInputRef.current) {
+        emberEditInputRef.current.focus();
+      }
+    }, 0);
+  }, []);
+
+  // Add cleanup effect for Ember state
+  useEffect(() => {
+    return () => {
+      setEmberHighlightedIndex(-1);
+      setEmberEditingId(null);
+      setEmberDaysEditingId(null);
+    };
+  }, []);
+
+  // Handle Ember keyboard navigation
+  useEffect(() => {
+    const handleEmberKeyboard = (e) => {
+      try {
+        // Prevent handling if we're in an input field (except for Escape)
+        if (e.target.tagName === 'INPUT' && e.key !== 'Escape') return;
+        if (e.target.tagName === 'TEXTAREA') return;
+
+        // Only handle keyboard events if we have a highlighted item or are in edit mode
+        if (emberHighlightedIndex === -1 && !emberEditingId) return;
+        
+        // If in edit mode, handle Escape and Enter
+        if (emberEditingId) {
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            // Always remove empty items when escaping
+            setColumns(prev => {
+              try {
+                const item = prev.ember.items.find(i => i.id === emberEditingId);
+                if (item && (!item.text || !item.text.trim())) {
+                  const updated = { ...prev };
+                  const emberColumn = { ...updated.ember };
+                  emberColumn.items = emberColumn.items.filter(i => i.id !== emberEditingId);
+                  updated.ember = emberColumn;
+                  return updated;
+                }
+                return prev;
+              } catch (error) {
+                console.error('Error handling Escape in edit mode:', error);
+                return prev;
+              }
+            });
+            setEmberEditingId(null);
+            setEmberHighlightedIndex(-1); // Clear highlight when escaping edit mode
+            return;
+          }
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            e.stopPropagation();
+            const input = emberEditInputRef.current;
+            if (input) {
+              if (!input.value.trim()) {
+                // Remove empty items
+                setColumns(prev => {
+                  try {
+                    const updated = { ...prev };
+                    const emberColumn = { ...updated.ember };
+                    emberColumn.items = emberColumn.items.filter(i => i.id !== emberEditingId);
+                    updated.ember = emberColumn;
+                    return updated;
+                  } catch (error) {
+                    console.error('Error handling Enter with empty input:', error);
+                    return prev;
+                  }
+                });
+              } else {
+                handleEmberEditComplete(emberEditingId, input.value);
+              }
+            }
+            setEmberEditingId(null);
+            return;
+          }
+          return;
+        }
+
+        const emberItems = columns.ember.items;
+        if (!emberItems?.length) return;
+
+        switch (e.key.toLowerCase()) {
+          case 'e':
+            e.preventDefault();
+            e.stopPropagation();
+            if (emberHighlightedIndex >= 0 && emberHighlightedIndex < emberItems.length) {
+              const item = emberItems[emberHighlightedIndex];
+              handleEmberReset(item.id);
+            }
+            break;
+          case 'enter':
+            e.preventDefault();
+            e.stopPropagation();
+            if (emberHighlightedIndex >= 0 && emberHighlightedIndex < emberItems.length) {
+              const item = emberItems[emberHighlightedIndex];
+              startEmberEdit(item.id, setEmberEditingId);
+            }
+            break;
+          case 'delete':        // Forward delete on Mac
+          case 'del':          // Delete on some keyboards
+          case 'backspace':    // Backspace
+            if (emberHighlightedIndex >= 0 && emberHighlightedIndex < emberItems.length) {
+              e.preventDefault();
+              e.stopPropagation();
+              const itemId = emberItems[emberHighlightedIndex].id;
+              setColumns(prev => {
+                try {
+                  const updated = { ...prev };
+                  const emberColumn = { ...updated.ember };
+                  emberColumn.items = emberColumn.items.filter(i => i.id !== itemId);
+                  updated.ember = emberColumn;
+                  return updated;
+                } catch (error) {
+                  console.error('Error handling delete:', error);
+                  return prev;
+                }
+              });
+              // Adjust highlighted index if needed
+              if (emberHighlightedIndex >= emberItems.length - 1) {
+                setEmberHighlightedIndex(prev => Math.max(0, prev - 1));
+              }
+            }
+            break;
+          case 'escape':
+            e.preventDefault();
+            e.stopPropagation();
+            // Clear highlight state when Escape is pressed
+            setEmberHighlightedIndex(-1);
+            break;
+          case 'j':
+            e.preventDefault();
+            e.stopPropagation();
+            setEmberHighlightedIndex(prev => 
+              prev < emberItems.length - 1 ? prev + 1 : prev);
+            break;
+          case 'k':
+            e.preventDefault();
+            e.stopPropagation();
+            setEmberHighlightedIndex(prev => 
+              prev > 0 ? prev - 1 : prev);
+            break;
+          default:
+            break;
+        }
+      } catch (error) {
+        console.error('Error in Ember keyboard handler:', error);
+        // Reset state on error
+        setEmberHighlightedIndex(-1);
+        setEmberEditingId(null);
+      }
+    };
+
+    // Use capture phase to ensure our handler runs first
+    window.addEventListener('keydown', handleEmberKeyboard, true);
+    return () => window.removeEventListener('keydown', handleEmberKeyboard, true);
+  }, [
+    columns,
+    emberEditingId,
+    emberHighlightedIndex,
+    handleEmberEditComplete,
+    handleEmberReset,
+    setEmberEditingId,
+    setEmberHighlightedIndex
+  ]);
+
+  // Update localStorage save effect to include ember column data
   useEffect(() => {
     let isMounted = true;
 
@@ -261,17 +571,16 @@ function App() {
         const savedSuccessfully = saveToLocalStorage(columns);
         if (!savedSuccessfully && isMounted) {
           console.warn('Failed to save to localStorage. Your changes may not persist.');
-          // You could set some state here to show a user-facing error message if desired
         }
       }
     };
 
     saveData();
 
-    // Attempt to save any pending changes before unmounting
     return () => {
       isMounted = false;
       if (!isUndoingRef.current) {
+        // Ensure final state is saved before unmounting
         saveToLocalStorage(columns);
       }
     };
@@ -455,10 +764,179 @@ function App() {
     };
   }, []);
 
+  // Handle keyboard navigation and shortcuts
+  useEffect(() => {
+    const handleKeyboard = (e) => {
+      try {
+        // Don't handle if we're in an input field
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+        const currentColumn = getEffectiveColumn();
+        if (!currentColumn) return;
+
+        // Get visible items in current column
+        const currentItems = filterItems(columns[currentColumn].items, currentColumn);
+        if (!currentItems?.length) return;
+
+        const currentIndex = focusedItemId 
+          ? currentItems.findIndex(item => item.id === focusedItemId)
+          : -1;
+
+        switch (e.key.toLowerCase()) {
+          case 'j':
+          case 'arrowdown': {
+            e.preventDefault();
+            e.stopPropagation();
+            let newIndex = currentIndex;
+            if (currentIndex < currentItems.length - 1) {
+              newIndex = currentIndex + 1;
+            } else if (currentIndex === -1) {
+              newIndex = 0;
+            }
+            if (newIndex !== currentIndex) {
+              setFocusedItemId(currentItems[newIndex].id);
+              // If in Ember column, also update highlight
+              if (currentColumn === 'ember') {
+                setEmberHighlightedIndex(newIndex);
+              }
+            }
+            break;
+          }
+          case 'k':
+          case 'arrowup': {
+            e.preventDefault();
+            e.stopPropagation();
+            let newIndex = currentIndex;
+            if (currentIndex > 0) {
+              newIndex = currentIndex - 1;
+            } else if (currentIndex === -1) {
+              newIndex = currentItems.length - 1;
+            }
+            if (newIndex !== currentIndex) {
+              setFocusedItemId(currentItems[newIndex].id);
+              // If in Ember column, also update highlight
+              if (currentColumn === 'ember') {
+                setEmberHighlightedIndex(newIndex);
+              }
+            }
+            break;
+          }
+          case 'd':
+          case 'delete':
+          case 'backspace': {
+            // Only handle if we have a focused item or selected items
+            if (!focusedItemId && selectedIds.length === 0) return;
+            
+            e.preventDefault();
+            e.stopPropagation();
+            
+            try {
+              setColumns(prev => {
+                const updated = { ...prev };
+                const col = { ...updated[currentColumn] };
+                
+                // Determine which items to delete
+                const itemsToDelete = selectedIds.length > 0 
+                  ? selectedIds 
+                  : [focusedItemId];
+                
+                // Find the index of the first item to be deleted
+                const firstDeleteIndex = currentItems.findIndex(
+                  item => itemsToDelete.includes(item.id)
+                );
+                
+                // Remove the items
+                col.items = col.items.filter(
+                  item => !itemsToDelete.includes(item.id)
+                );
+                updated[currentColumn] = col;
+
+                // Update focus to next available item
+                const remainingItems = filterItems(col.items, currentColumn);
+                if (remainingItems.length > 0) {
+                  const nextIndex = Math.min(firstDeleteIndex, remainingItems.length - 1);
+                  const nextItem = remainingItems[nextIndex];
+                  
+                  // Schedule focus update after state change
+                  setTimeout(() => {
+                    setFocusedItemId(nextItem.id);
+                    if (currentColumn === 'ember') {
+                      setEmberHighlightedIndex(nextIndex);
+                    }
+                  }, 0);
+                } else {
+                  // No items left, clear focus
+                  setTimeout(() => {
+                    setFocusedItemId(null);
+                    if (currentColumn === 'ember') {
+                      setEmberHighlightedIndex(-1);
+                    }
+                  }, 0);
+                }
+
+                return updated;
+              });
+
+              // Clear selection after delete
+              setSelectedIds([]);
+              
+            } catch (error) {
+              console.error('Error during delete operation:', error);
+              // Provide user feedback
+              // You might want to add a toast notification system here
+            }
+            break;
+          }
+          case 'escape': {
+            e.preventDefault();
+            e.stopPropagation();
+            setFocusedItemId(null);
+            setSelectedIds([]);
+            if (currentColumn === 'ember') {
+              setEmberHighlightedIndex(-1);
+            }
+            break;
+          }
+          default: {
+            // Handle any other keys if needed
+            break;
+          }
+        }
+      } catch (error) {
+        console.error('Error in keyboard handler:', error);
+        // Reset state on error
+        setFocusedItemId(null);
+        setEmberHighlightedIndex(-1);
+        setSelectedIds([]);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyboard);
+    return () => window.removeEventListener('keydown', handleKeyboard);
+  }, [
+    columns,
+    focusedItemId,
+    selectedIds,
+    getEffectiveColumn,
+    filterItems,
+    setFocusedItemId,
+    setEmberHighlightedIndex,
+    setSelectedIds,
+    setColumns
+  ]);
+
   // Add keyboard event listener for delete
   useEffect(() => {
     const handleKeyDown = (e) => {
+      // Don't handle if we're in an input field
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      
+      // Don't handle delete if we have a highlighted Ember item
+      if (emberHighlightedIndex >= 0) return;
+      
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.length > 0) {
+        e.preventDefault();
+        e.stopPropagation();
         // Delete all selected items
         setColumns(prev => {
           const updated = { ...prev };
@@ -477,414 +955,137 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedIds]);
-
-  // Get the next column in sequence
-  const getNextColumnId = useCallback((currentColumnId) => {
-    const currentIndex = COLUMN_SEQUENCE.indexOf(currentColumnId);
-    return COLUMN_SEQUENCE[(currentIndex + 1) % COLUMN_SEQUENCE.length];
-  }, []);
-
-  // Get the previous column in sequence
-  const getPreviousColumnId = useCallback((currentColumnId) => {
-    const currentIndex = COLUMN_SEQUENCE.indexOf(currentColumnId);
-    return COLUMN_SEQUENCE[(currentIndex - 1 + COLUMN_SEQUENCE.length) % COLUMN_SEQUENCE.length];
-  }, []);
-
-  // Enter edit mode for item
-  const startEditItem = useCallback((item) => {
-    notifyTipAction('click-edit');
-  }, [notifyTipAction]);
-
-  // Helper to find nearest column in drag direction
-  const findNearestColumn = useCallback((source, dragEndClient) => {
-    if (!dragStartPos.current || !dragEndClient) return null;
-
-    // Calculate total drag movement
-    const dragDelta = {
-      x: dragEndClient.x - dragStartPos.current.x,
-      y: dragEndClient.y - dragStartPos.current.y
-    };
-
-    // Reduce minimum drag threshold
-    if (Math.abs(dragDelta.x) < 2) return null;
-
-    // Get container offset
-    const container = document.querySelector('.columns');
-    if (!container) return null;
-
-    // Get all column elements with adjusted positions
-    const columns = COLUMN_SEQUENCE.map(id => ({
-      id,
-      element: document.getElementById(`column-${id}`),
-      rect: document.getElementById(`column-${id}`).getBoundingClientRect()
-    })).filter(col => col.element);
-
-    // Get source column info
-    const sourceCol = columns.find(col => col.id === source);
-    if (!sourceCol) return null;
-
-    // Determine drag direction
-    const isDraggingRight = dragDelta.x > 0;
-
-    // Filter columns based on direction and adjusted positions
-    const possibleTargets = columns.filter(col => {
-      if (isDraggingRight) {
-        return dragEndClient.x >= col.rect.left && col.id !== source;
-      } else {
-        return dragEndClient.x <= col.rect.right && col.id !== source;
-      }
-    });
-
-    if (possibleTargets.length === 0) return null;
-
-    // Find nearest column based on distance to drag point
-    return possibleTargets.reduce((nearest, current) => {
-      if (!nearest) return current;
-
-      const nearestDist = Math.min(
-        Math.abs(nearest.rect.left - dragEndClient.x),
-        Math.abs(nearest.rect.right - dragEndClient.x)
-      );
-      
-      const currentDist = Math.min(
-        Math.abs(current.rect.left - dragEndClient.x),
-        Math.abs(current.rect.right - dragEndClient.x)
-      );
-
-      return currentDist < nearestDist ? current : nearest;
-    }).id;
-  }, []);
-
-  // Handle migration completion
-  const handleMigrationComplete = useCallback(() => {
-    if (initialState.current.needsMigration && initialState.current.oldData) {
-      const migrated = migrateData(initialState.current.oldData, initialState.current.oldData.version);
-      setColumns(migrated.columns);
-      saveToLocalStorage(migrated.columns);
-    }
-    setIsMigrating(false);
-  }, [saveToLocalStorage]);
-
-  // Show migration overlay if needed
-  useEffect(() => {
-    if (initialState.current.needsMigration) {
-      setIsMigrating(true);
-    }
-  }, []);
-
-  // Toggle between DO and DONE
-  const toggleDoDone = () => {
-    setShowDone(prev => !prev);
-  };
-
-  // Toggle between OTHERS and IGNORE
-  const toggleOthersIgnore = () => {
-    setShowIgnore(prev => !prev);
-    setIgnoreBlinking(true);
-    setTimeout(() => setIgnoreBlinking(false), 500);
-  };
-
-  // Update column search handling
-  const handleColumnSearch = useCallback((columnId, searchText) => {
-    setColumnSearch(prev => ({
-      ...prev,
-      [columnId]: searchText.toLowerCase()
-    }));
-    notifyTipAction('column-search');
-  }, [notifyTipAction]);
-
-  // Handle arrow key navigation
-  const handleArrowNavigation = useCallback((e) => {
-    // Only handle arrow keys when not in an input field
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-      
-    const currentColumn = getEffectiveColumn();
-    if (!currentColumn) return;
-
-    if (['ArrowUp', 'ArrowDown'].includes(e.key)) {
-        e.preventDefault();
-      
-      // Get visible items in current column
-      const currentItems = filterItems(columns[currentColumn].items, currentColumn);
-      const currentIndex = focusedItemId 
-        ? currentItems.findIndex(item => item.id === focusedItemId)
-        : -1;
-      
-      switch (e.key) {
-        case 'ArrowUp': {
-          if (currentIndex > 0) {
-            setFocusedItemId(currentItems[currentIndex - 1].id);
-          } else if (currentIndex === -1 && currentItems.length > 0) {
-            setFocusedItemId(currentItems[currentItems.length - 1].id);
-          }
-          break;
-        }
-        case 'ArrowDown': {
-          if (currentIndex < currentItems.length - 1) {
-            setFocusedItemId(currentItems[currentIndex + 1].id);
-          } else if (currentIndex === -1 && currentItems.length > 0) {
-            setFocusedItemId(currentItems[0].id);
-          }
-          break;
-        }
-        default:
-          break;
-      }
-    }
-  }, [columns, focusedItemId, getEffectiveColumn, filterItems]);
-
-  // Add keyboard event listener for arrow navigation
-  useEffect(() => {
-    window.addEventListener('keydown', handleArrowNavigation);
-    return () => window.removeEventListener('keydown', handleArrowNavigation);
-  }, [handleArrowNavigation]);
-
-  // Clear focused item when column changes
-  useEffect(() => {
-    setFocusedItemId(null);
-  }, [hoveredColumn, keyboardFocusedColumn]);
-
-  // Update renderDraggableItem to show focus state
-  const renderDraggableItem = (provided, snapshot, item, columnId) => (
-    <div
-      ref={provided.innerRef}
-      {...provided.draggableProps}
-      {...provided.dragHandleProps}
-      className={`todo-item-wrapper ${selectedIds.includes(item.id) ? 'selected' : ''} ${focusedItemId === item.id ? 'keyboard-focused' : ''}`}
-      data-id={item.id}
-    >
-      <SelectableItem
-        item={item}
-        isSelected={selectedIds.includes(item.id)}
-        isFocused={focusedItemId === item.id}
-        onClick={(e) => {
-          if (e.shiftKey) {
-            toggleSelection(item.id, e);
-          } else if (e.metaKey || e.ctrlKey) {
-            // Command/Ctrl+click to move to DONE from any column
-            if (columnId !== 'done') {
-              setDoneBlinking(true);
-              setTimeout(() => setDoneBlinking(false), 500);
-              
-          setColumns(prev => {
-            const updated = { ...prev };
-                const now = new Date().toISOString();
-                
-                // Remove item from current column
-                const sourceColumn = { ...updated[columnId] };
-                const [movedItem] = sourceColumn.items.filter(i => i.id === item.id);
-                sourceColumn.items = sourceColumn.items.filter(i => i.id !== item.id);
-                updated[columnId] = sourceColumn;
-
-                // Add to DONE column with timestamp
-                const doneColumn = { ...updated.done };
-                doneColumn.items = [
-                  { ...movedItem, completedAt: now },
-                  ...doneColumn.items
-                ];
-                updated.done = doneColumn;
-            
-            return updated;
-          });
-              setSelectedIds([]);
-              notifyTipAction('cmd-click-move');
-            }
-          } else {
-            // Regular click just focuses the item
-            setFocusedItemId(item.id);
-          }
-        }}
-        onUpdate={(newText) => {
-          setColumns(prev => {
-            const updated = { ...prev };
-            const column = { ...updated[columnId] };
-            column.items = column.items.map(i => 
-              i.id === item.id ? { ...i, text: newText } : i
-            );
-            updated[columnId] = column;
-            return updated;
-          });
-        }}
-        columnId={columnId}
-      />
-    </div>
-  );
-
-  // Restore handleQuickAddKeyDown
-  const handleQuickAddKeyDown = useCallback((e, columnId) => {
-    if (e.key === 'Enter' || (e.key === 'Tab' && e.target.value.trim() === '')) {
-      e.preventDefault();
-      try {
-        const sanitizedText = sanitizeItemText(e.target.value);
-        if (sanitizedText) {
-          setColumns(prev => {
-            const updated = { ...prev };
-            const newItem = {
-              id: `id-${Date.now()}-${Math.random()}`,
-              text: sanitizedText,
-              completedAt: columnId === 'done' ? new Date().toISOString() : undefined
-            };
-            
-            updated[columnId] = {
-              ...updated[columnId],
-              items: columnId === 'done' 
-                ? [newItem, ...updated[columnId].items]
-                : [...updated[columnId].items, newItem]
-            };
-            
-            return updated;
-          });
-        }
-          e.target.value = '';
-        if (e.key === 'Tab' && e.target.value.trim() === '') {
-          const nextColumnId = getNextColumnId(columnId);
-          setQuickAddColumn(nextColumnId);
-        }
-      } catch (error) {
-        console.error('Error adding item:', error);
-      }
-    } else if (e.key === 'Backspace' && e.target.value === '') {
-      const prevColumnId = getPreviousColumnId(columnId);
-      const prevColumn = columns[prevColumnId];
-      if (prevColumn && prevColumn.items.length > 0) {
-        const lastItem = prevColumn.items[prevColumn.items.length - 1];
-        startEditItem(lastItem);
-        setQuickAddColumn(null);
-      }
-    }
-  }, [columns, sanitizeItemText, getNextColumnId, getPreviousColumnId, startEditItem]);
-
-  // Restore handleQuickAddBlur
-  const handleQuickAddBlur = useCallback((e) => {
-    const sanitizedText = sanitizeItemText(e.target.value);
-    if (sanitizedText && quickAddColumn) {
-      setColumns(prev => {
-        const updated = { ...prev };
-        const newItem = {
-          id: `id-${Date.now()}-${Math.random()}`,
-          text: sanitizedText,
-          completedAt: quickAddColumn === 'done' ? new Date().toISOString() : undefined
-        };
-        
-        updated[quickAddColumn] = {
-          ...updated[quickAddColumn],
-          items: quickAddColumn === 'done' 
-            ? [newItem, ...updated[quickAddColumn].items]
-            : [...updated[quickAddColumn].items, newItem]
-        };
-        
-        return updated;
-      });
-    }
-    setQuickAddColumn(null);
-  }, [quickAddColumn, sanitizeItemText]);
-
-  // Restore renderQuickAddInput
-  const renderQuickAddInput = useCallback((columnId) => {
-    if (quickAddColumn !== columnId) return null;
-
-    return (
-      <input
-        className="quick-add-input"
-        autoFocus
-        placeholder="Type and press Enter to add"
-        onBlur={handleQuickAddBlur}
-        onKeyDown={(e) => handleQuickAddKeyDown(e, columnId)}
-        onClick={(e) => e.stopPropagation()} // Prevent click from bubbling
-        style={{
-          position: 'relative',
-          display: 'inline-block',
-          minWidth: '50px',
-          maxWidth: 'calc(100% - 32px)'
-        }}
-      />
-    );
-  }, [quickAddColumn, handleQuickAddBlur, handleQuickAddKeyDown]);
-
-  // Restore Cmd+A functionality
-  useEffect(() => {
-    const handleGlobalKeyPress = (e) => {
-      // Ignore if we're in an input field or textarea
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-      
-      // Handle Command+A (or Ctrl+A) for selecting all items in hovered column
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a' && getEffectiveColumn()) {
-        e.preventDefault(); // Prevent default select all
-        // Select all items in the hovered column
-        const columnItems = columns[getEffectiveColumn()]?.items || [];
-        const itemIds = columnItems.map(item => item.id);
-        setSelectedIds(itemIds);
-        notifyTipAction('select-all');
-        return;
-      }
-      
-      // Only trigger for printable characters and ignore modifier keys
-      if (getEffectiveColumn() && e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        e.preventDefault();
-        setQuickAddColumn(getEffectiveColumn());
-        
-        // Small delay to ensure input is focused before setting value
-        setTimeout(() => {
-          const input = document.querySelector('.quick-add-input');
-          if (input) {
-            input.value = e.key;
-            input.focus();
-          }
-        }, 0);
-      }
-    };
-
-    window.addEventListener('keypress', handleGlobalKeyPress);
-    
-    // Add keydown listener for Command+A
-    const handleGlobalKeyDown = (e) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a' && getEffectiveColumn()) {
-        e.preventDefault();
-        const columnItems = columns[getEffectiveColumn()]?.items || [];
-        const itemIds = columnItems.map(item => item.id);
-        setSelectedIds(itemIds);
-      }
-    };
-    
-    window.addEventListener('keydown', handleGlobalKeyDown);
-
-    return () => {
-      window.removeEventListener('keypress', handleGlobalKeyPress);
-      window.removeEventListener('keydown', handleGlobalKeyDown);
-    };
-  }, [getEffectiveColumn, columns, notifyTipAction, setSelectedIds]);
+  }, [selectedIds, emberHighlightedIndex, setColumns, setSelectedIds]);
 
   // Add keyboard event listeners for cut/copy/paste and tab navigation
   useEffect(() => {
+    let isMounted = true;
+
     const handleKeyDown = (e) => {
-      // Ignore if we're in an input field or textarea
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-      
-      if (e.key === 'Tab') {
-        e.preventDefault();
-        
-        const currentColumn = getEffectiveColumn() || COLUMN_SEQUENCE[0];
-        const currentIndex = COLUMN_SEQUENCE.indexOf(currentColumn);
-        
-        // Calculate next column index based on shift key
-        const nextIndex = e.shiftKey
-          ? (currentIndex - 1 + COLUMN_SEQUENCE.length) % COLUMN_SEQUENCE.length
-          : (currentIndex + 1) % COLUMN_SEQUENCE.length;
-        
-        setKeyboardFocusedColumn(COLUMN_SEQUENCE[nextIndex]);
-        
-        // Scroll the column into view if needed
-        const columnElement = document.getElementById(`column-${COLUMN_SEQUENCE[nextIndex]}`);
-        if (columnElement) {
-          columnElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      try {
+        // Ignore if in input field or textarea
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+        if (e.key === 'Tab') {
+          e.preventDefault();
+          e.stopPropagation();
+          
+          const currentColumn = getEffectiveColumn() || COLUMN_SEQUENCE[0];
+          if (!COLUMN_SEQUENCE.includes(currentColumn)) {
+            console.error('Invalid column:', currentColumn);
+            return;
+          }
+
+          const currentIndex = COLUMN_SEQUENCE.indexOf(currentColumn);
+          
+          // Calculate next column index based on shift key
+          const nextIndex = e.shiftKey
+            ? (currentIndex - 1 + COLUMN_SEQUENCE.length) % COLUMN_SEQUENCE.length
+            : (currentIndex + 1) % COLUMN_SEQUENCE.length;
+          
+          const nextColumn = COLUMN_SEQUENCE[nextIndex];
+          if (isMounted) {
+            setKeyboardFocusedColumn(nextColumn);
+          }
+          
+          // If moving to Ember column, add new contact
+          if (nextColumn === 'ember') {
+            handleAddEmberContact();
+          }
+          
+          // Scroll the column into view if needed
+          try {
+            const columnElement = document.getElementById(`column-${nextColumn}`);
+            if (columnElement) {
+              columnElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+          } catch (scrollError) {
+            console.error('Error scrolling to column:', scrollError);
+          }
+        }
+      } catch (error) {
+        console.error('Error in keyboard handler:', error);
+        // Reset state on error
+        if (isMounted) {
+          setKeyboardFocusedColumn(null);
         }
       }
     };
-    
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [getEffectiveColumn]);
+
+    const handleGlobalKeyPress = (e) => {
+      try {
+        // Ignore if in input field or textarea
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+        
+        // Handle Command+A (or Ctrl+A) for selecting all items in hovered column
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a' && getEffectiveColumn()) {
+          e.preventDefault();
+          e.stopPropagation();
+          
+          const column = getEffectiveColumn();
+          if (!column) return;
+
+          const columnItems = columns[column]?.items;
+          if (!columnItems?.length) return;
+
+          const itemIds = columnItems.map(item => item.id);
+          if (isMounted) {
+            setSelectedIds(itemIds);
+            notifyTipAction('select-all');
+          }
+          return;
+        }
+        
+        // Only trigger for printable characters and ignore modifier keys
+        if (getEffectiveColumn() && e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+          e.preventDefault();
+          e.stopPropagation();
+          
+          if (isMounted) {
+            setQuickAddColumn(getEffectiveColumn());
+          }
+          
+          // Small delay to ensure input is focused
+          setTimeout(() => {
+            if (!isMounted) return;
+            try {
+              const input = document.querySelector('.quick-add-input');
+              if (input) {
+                input.value = e.key;
+                input.focus();
+              }
+            } catch (focusError) {
+              console.error('Error focusing quick add input:', focusError);
+            }
+          }, 0);
+        }
+      } catch (error) {
+        console.error('Error in global key press handler:', error);
+        // Reset state on error
+        if (isMounted) {
+          setQuickAddColumn(null);
+          setSelectedIds([]);
+        }
+      }
+    };
+
+    window.addEventListener('keypress', handleGlobalKeyPress, true);
+    window.addEventListener('keydown', handleKeyDown, true);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener('keypress', handleGlobalKeyPress, true);
+      window.removeEventListener('keydown', handleKeyDown, true);
+    };
+  }, [
+    getEffectiveColumn,
+    columns,
+    notifyTipAction,
+    setSelectedIds,
+    setQuickAddColumn,
+    setKeyboardFocusedColumn,
+    handleAddEmberContact
+  ]);
 
   // Handle copy operation
   const handleCopy = useCallback(() => {
@@ -914,17 +1115,17 @@ function App() {
     // Remove cut items
     setColumns(prev => {
       const updated = { ...prev };
-      Object.keys(updated).forEach(columnId => {
-        updated[columnId] = {
-          ...updated[columnId],
-          items: updated[columnId].items.filter(item => !selectedIds.includes(item.id))
+      Object.keys(updated).forEach((colId) => {
+        updated[colId] = {
+          ...updated[colId],
+          items: updated[colId].items.filter(item => !selectedIds.includes(item.id))
         };
       });
+      
+      setSelectedIds([]);
+      notifyTipAction('cut');
       return updated;
     });
-    
-    setSelectedIds([]);
-    notifyTipAction('cut');
   }, [selectedIds, handleCopy, notifyTipAction]);
 
   // Handle paste operation
@@ -991,6 +1192,217 @@ function App() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleCut, handleCopy, handleClipboardPaste]);
+
+  // Update renderEmberItem to include days editing
+  const renderEmberItem = (item, index) => {
+    const daysFromNow = calculateDaysFromNow(item.nextContact);
+    const opacity = calculateOpacity(daysFromNow);
+    const isEditing = emberEditingId === item.id;
+    const isDaysEditing = emberDaysEditingId === item.id;
+    
+    return (
+      <div
+        key={item.id}
+        className={`ember-item ${index === emberHighlightedIndex ? 'highlighted' : ''} ${isEditing ? 'editing' : ''}`}
+        style={{ 
+          opacity,
+          backgroundColor: index === emberHighlightedIndex ? '#2a2a2a' : 'transparent'
+        }}
+        onClick={(e) => {
+          if (e.metaKey || e.ctrlKey) {
+            handleEmberReset(item.id);
+          } else if (!item.text) {
+            // Start editing if item is unnamed
+            startEmberEdit(item.id, setEmberEditingId);
+          }
+        }}
+      >
+        {isEditing ? (
+          <input
+            ref={emberEditInputRef}
+            defaultValue={item.text}
+            onBlur={(e) => handleEmberEditComplete(item.id, e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === 'Tab') {
+                e.preventDefault();
+                handleEmberEditComplete(item.id, e.target.value);
+                setEmberDaysEditingId(item.id);
+                setTimeout(() => {
+                  if (emberDaysInputRef.current) {
+                    emberDaysInputRef.current.focus();
+                    emberDaysInputRef.current.select();
+                  }
+                }, 0);
+              } else if (e.key === 'Escape') {
+                setEmberEditingId(null);
+              }
+            }}
+          />
+        ) : (
+          <>
+            <span 
+              onClick={(e) => {
+                e.stopPropagation();
+                startEmberEdit(item.id, setEmberEditingId);
+              }}
+              style={{
+                cursor: 'text',
+                color: item.text ? 'inherit' : '#666'
+              }}
+            >
+              {item.text || '<unnamed>'}
+            </span>
+            {isDaysEditing ? (
+              <input
+                ref={emberDaysInputRef}
+                className="ember-days-edit"
+                defaultValue={daysFromNow}
+                onBlur={(e) => {
+                  const days = parseInt(e.target.value, 10);
+                  if (!isNaN(days) && days > 0) {
+                    handleEmberDaysEditComplete(item.id, days);
+                  } else {
+                    setEmberDaysEditingId(null);
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === 'Tab') {
+                    e.preventDefault();
+                    const days = parseInt(e.target.value, 10);
+                    if (!isNaN(days) && days > 0) {
+                      handleEmberDaysEditComplete(item.id, days);
+                    } else {
+                      setEmberDaysEditingId(null);
+                    }
+                  } else if (e.key === 'Escape') {
+                    setEmberDaysEditingId(null);
+                  }
+                }}
+              />
+            ) : (
+              <span 
+                style={{ color: '#666' }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setEmberDaysEditingId(item.id);
+                  setTimeout(() => {
+                    if (emberDaysInputRef.current) {
+                      emberDaysInputRef.current.focus();
+                      emberDaysInputRef.current.select();
+                    }
+                  }, 0);
+                }}
+              >
+                {daysFromNow}d
+              </span>
+            )}
+          </>
+        )}
+      </div>
+    );
+  };
+
+  // Add todo handler
+  const addTodo = useCallback((text, columnId) => {
+    setColumns(prev => {
+      const updated = { ...prev };
+      const newItem = {
+        id: `id-${Date.now()}-${Math.random()}`,
+        text: text,
+        completedAt: columnId === 'done' ? new Date().toISOString() : undefined
+      };
+      
+      updated[columnId] = {
+        ...updated[columnId],
+        items: columnId === 'done' 
+          ? [newItem, ...updated[columnId].items]
+          : [...updated[columnId].items, newItem]
+      };
+      
+      return updated;
+    });
+  }, []);
+
+  // Initialize quick add functionality
+  const {
+    quickAddInputRef,
+    handleQuickAddKeyDown,
+    handleQuickAddBlur,
+    renderQuickAddInput,
+    startEditItem,
+    getPreviousColumnId
+  } = useQuickAdd({
+    addTodo,
+    columns,
+    quickAddColumn,
+    setQuickAddColumn
+  });
+
+  // Update renderDraggableItem to show focus state
+  const renderDraggableItem = useCallback((provided, snapshot, item, columnId) => (
+    <div
+      ref={provided.innerRef}
+      {...provided.draggableProps}
+      {...provided.dragHandleProps}
+      className={`todo-item-wrapper ${selectedIds.includes(item.id) ? 'selected' : ''} ${focusedItemId === item.id ? 'keyboard-focused' : ''}`}
+      data-id={item.id}
+    >
+      <SelectableItem
+        item={item}
+        isSelected={selectedIds.includes(item.id)}
+        isFocused={focusedItemId === item.id}
+        onClick={(e) => {
+          if (e.shiftKey) {
+            toggleSelection(item.id, e);
+          } else if (e.metaKey || e.ctrlKey) {
+            // Command/Ctrl+click to move to DONE from any column
+            if (columnId !== 'done') {
+              setDoneBlinking(true);
+              setTimeout(() => setDoneBlinking(false), 500);
+              
+              setColumns(prev => {
+                const updated = { ...prev };
+                const now = new Date().toISOString();
+                
+                // Remove item from current column
+                const sourceColumn = { ...updated[columnId] };
+                const [movedItem] = sourceColumn.items.filter(i => i.id === item.id);
+                sourceColumn.items = sourceColumn.items.filter(i => i.id !== item.id);
+                updated[columnId] = sourceColumn;
+
+                // Add to DONE column with timestamp
+                const doneColumn = { ...updated.done };
+                doneColumn.items = [
+                  { ...movedItem, completedAt: now },
+                  ...doneColumn.items
+                ];
+                updated.done = doneColumn;
+                
+                return updated;
+              });
+              setSelectedIds([]);
+              notifyTipAction('cmd-click-move');
+            }
+          } else {
+            // Regular click just focuses the item
+            setFocusedItemId(item.id);
+          }
+        }}
+        onUpdate={(newText) => {
+          setColumns(prev => {
+            const updated = { ...prev };
+            const column = { ...updated[columnId] };
+            column.items = column.items.map(i => 
+              i.id === item.id ? { ...i, text: newText } : i
+            );
+            updated[columnId] = column;
+            return updated;
+          });
+        }}
+        columnId={columnId}
+      />
+    </div>
+  ), [selectedIds, focusedItemId, setColumns, setSelectedIds, setFocusedItemId, setDoneBlinking, notifyTipAction]);
 
   return (
     <>
@@ -1206,6 +1618,38 @@ function App() {
                   </div>
                 )}
               </StrictModeDroppable>
+            </div>
+
+            {/* Ember Column */}
+            <div 
+              className={`column ${keyboardFocusedColumn === 'ember' ? 'keyboard-focused' : ''}`}
+              style={{ minWidth: '250px' }}
+            >
+              <h2 className={getEffectiveColumn() === 'ember' ? 'hovered' : ''}>
+                EMBER
+              </h2>
+              <input
+                className="column-search"
+                placeholder="🔍"
+                value={columnSearch.ember}
+                onChange={(e) => handleColumnSearch('ember', e.target.value)}
+              />
+              <div
+                id="column-ember"
+                className="droppable-area"
+                onMouseEnter={() => handleColumnHover('ember')}
+                onMouseLeave={() => handleColumnHover(null)}
+                onClick={(e) => {
+                  // Only trigger if clicking the empty space (not on items)
+                  if (e.target === e.currentTarget) {
+                    handleAddEmberContact();
+                  }
+                }}
+              >
+                {filterItems([...columns.ember.items]
+                  .sort((a, b) => new Date(a.nextContact) - new Date(b.nextContact)), 'ember')
+                  .map((item, index) => renderEmberItem(item, index))}
+              </div>
             </div>
           </div>
         </div>

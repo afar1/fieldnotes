@@ -27,7 +27,7 @@ body {
 
 .columns {
   display: grid;
-  grid-template-columns: minmax(354px, 472px) minmax(354px, 472px);
+  grid-template-columns: repeat(3, minmax(354px, 472px));
   gap: 20px;
   background-color: #1a1a1a;
   width: fit-content;
@@ -482,4 +482,64 @@ body {
 .todo-item.keyboard-focused {
   background-color: #264f78;
   outline: 1px solid #007acc;
+}
+
+.ember-item {
+  border-radius: 4px;
+  transition: all 0.2s ease;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #d4d4d4;
+  padding: 4px 8px;
+  margin: 0 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+}
+
+.ember-item:hover {
+  background-color: #2d2d2d !important;
+}
+
+.ember-item.highlighted {
+  background-color: #2d2d2d !important;
+}
+
+.ember-item.editing {
+  background-color: #333 !important;
+}
+
+.ember-item input {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  width: 100%;
+  padding: 0;
+  margin: 0;
+  outline: none;
+  font-family: inherit;
+}
+
+/* Add styles for days editing */
+.ember-days-edit {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  width: 30px;
+  padding: 0;
+  margin: 0 4px;
+  outline: none;
+  text-align: right;
+  font-family: inherit;
+}
+
+.ember-days-edit:focus {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  padding: 0 4px;
 }

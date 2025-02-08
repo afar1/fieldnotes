@@ -24,25 +24,41 @@ export const useKeyboardNavigation = ({
    * Handle tab navigation between columns
    */
   const handleTabNavigation = useCallback((e) => {
-    if (e.key !== 'Tab') return;
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    try {
+      if (e.key !== 'Tab') return;
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
-    e.preventDefault();
-    
-    const currentColumn = getEffectiveColumn() || COLUMN_SEQUENCE[0];
-    const currentIndex = COLUMN_SEQUENCE.indexOf(currentColumn);
-    
-    // Calculate next column index based on shift key
-    const nextIndex = e.shiftKey
-      ? (currentIndex - 1 + COLUMN_SEQUENCE.length) % COLUMN_SEQUENCE.length
-      : (currentIndex + 1) % COLUMN_SEQUENCE.length;
-    
-    setKeyboardFocusedColumn(COLUMN_SEQUENCE[nextIndex]);
-    
-    // Scroll the column into view if needed
-    const columnElement = document.getElementById(`column-${COLUMN_SEQUENCE[nextIndex]}`);
-    if (columnElement) {
-      columnElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      e.preventDefault();
+      
+      const currentColumn = getEffectiveColumn() || COLUMN_SEQUENCE[0];
+      if (!COLUMN_SEQUENCE.includes(currentColumn)) {
+        console.error('Invalid column:', currentColumn);
+        return;
+      }
+
+      const currentIndex = COLUMN_SEQUENCE.indexOf(currentColumn);
+      
+      // Calculate next column index based on shift key
+      const nextIndex = e.shiftKey
+        ? (currentIndex - 1 + COLUMN_SEQUENCE.length) % COLUMN_SEQUENCE.length
+        : (currentIndex + 1) % COLUMN_SEQUENCE.length;
+      
+      const nextColumn = COLUMN_SEQUENCE[nextIndex];
+      setKeyboardFocusedColumn(nextColumn);
+      
+      // Scroll the column into view if needed
+      try {
+        const columnElement = document.getElementById(`column-${nextColumn}`);
+        if (columnElement) {
+          columnElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      } catch (scrollError) {
+        console.error('Error scrolling to column:', scrollError);
+      }
+    } catch (error) {
+      console.error('Error in tab navigation:', error);
+      // Reset focus on error
+      setKeyboardFocusedColumn(null);
     }
   }, [getEffectiveColumn, setKeyboardFocusedColumn]);
 
@@ -50,41 +66,61 @@ export const useKeyboardNavigation = ({
    * Handle keyboard shortcuts
    */
   const handleKeyboardShortcuts = useCallback((e) => {
-    // Ignore if in input field
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    try {
+      // Ignore if in input field
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
-    if ((e.metaKey || e.ctrlKey) && !e.shiftKey) {
+      // Only handle Command/Ctrl shortcuts
+      if (!(e.metaKey || e.ctrlKey) || e.shiftKey) return;
+
       switch (e.key.toLowerCase()) {
         case 'x':
           e.preventDefault();
+          e.stopPropagation();
           handleCut();
           break;
         case 'c':
           e.preventDefault();
+          e.stopPropagation();
           handleCopy();
           break;
         case 'v':
           e.preventDefault();
+          e.stopPropagation();
           handlePaste();
           break;
         case 'z':
           e.preventDefault();
+          e.stopPropagation();
           handleUndo();
           break;
         default:
           break;
       }
+    } catch (error) {
+      console.error('Error in keyboard shortcuts:', error);
     }
   }, [handleCut, handleCopy, handlePaste, handleUndo]);
 
-  // Add keyboard event listeners
+  // Add keyboard event listeners with cleanup
   useEffect(() => {
-    window.addEventListener('keydown', handleTabNavigation);
-    window.addEventListener('keydown', handleKeyboardShortcuts);
+    let isMounted = true;
+
+    const safeHandleTabNavigation = (e) => {
+      if (isMounted) handleTabNavigation(e);
+    };
+
+    const safeHandleKeyboardShortcuts = (e) => {
+      if (isMounted) handleKeyboardShortcuts(e);
+    };
+
+    window.addEventListener('keydown', safeHandleTabNavigation, true);
+    window.addEventListener('keydown', safeHandleKeyboardShortcuts, true);
     
     return () => {
-      window.removeEventListener('keydown', handleTabNavigation);
-      window.removeEventListener('keydown', handleKeyboardShortcuts);
+      isMounted = false;
+      window.removeEventListener('keydown', safeHandleTabNavigation, true);
+      window.removeEventListener('keydown', safeHandleKeyboardShortcuts, true);
     };
   }, [handleTabNavigation, handleKeyboardShortcuts]);
 
