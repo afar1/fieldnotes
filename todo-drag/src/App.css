@@ -4,25 +4,22 @@ body {
   background-color: #1a1a1a;
   color: #ffffff;
   font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
-  overflow: hidden;
-  height: 100vh;
-  position: fixed;
+  min-height: 100vh;
+  position: relative;
   width: 100%;
 }
 
 .app-container {
   padding: 10px 0;
   user-select: none;
-  height: 100vh;
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   width: 100%;
-  overflow: hidden;
-  position: fixed;
-  top: 0;
-  left: 0;
+  position: relative;
+  pointer-events: none;
 }
 
 .columns {
@@ -35,6 +32,7 @@ body {
   overflow: hidden;
   margin: 0 auto;
   justify-content: center;
+  pointer-events: auto;
 }
 
 .column {
@@ -542,4 +540,20 @@ body {
   background: rgba(255, 255, 255, 0.1);
   border-radius: 2px;
   padding: 0 4px;
+}
+
+/* Make test panel collapsible on mobile */
+@media (max-width: 768px) {
+  .database-test {
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+}
+
+.database-test-wrapper {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  z-index: 9999;
+  pointer-events: auto;
 }
