@@ -8,9 +8,10 @@ import ProTipTooltip from './components/ProTipTooltip';
 import MigrationOverlay from './components/MigrationOverlay';
 import useQuickAdd from './hooks/useQuickAdd';
 import { useColumnToggles } from './hooks/useColumnToggles';
-import { findNearestColumn, getPreviousColumnId, startEditItem } from './utils/columnUtils';
+import { findNearestColumn } from './utils/columnUtils';
 import { supabase } from './supabaseClient';
 import { useAuth } from './auth/AuthContext';
+import { useNavigate } from 'react-router-dom';
 
 // Plain-English helper: generate ids that work with Supabase UUID columns
 const createClientId = () => {
@@ -188,8 +189,14 @@ const startEmberEdit = (id, setEditingId) => {
 };
 
 function BoardApp() {
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
+  const navigate = useNavigate();
   const activeUserId = user?.id ?? null;
+  
+  const handleSignOut = async () => {
+    await signOut();
+    navigate('/login');
+  };
   const [isMigrating, setIsMigrating] = useState(false);
 
   const localSnapshotRef = useRef(null);
@@ -215,6 +222,8 @@ function BoardApp() {
     others: '',
     ember: ''  // Add ember search state
   });
+  // History state for undo functionality (setter used via functional updates, value never read directly)
+  // eslint-disable-next-line no-unused-vars
   const [history, setHistory] = useState(() => [JSON.stringify(localSnapshotRef.current.columns)]);
   const isUndoingRef = useRef(false);
   const dragStartPos = useRef(null);
@@ -230,6 +239,8 @@ function BoardApp() {
   const syncTimerRef = useRef(null);
   const channelRef = useRef(null);
   const isMountedRef = useRef(true);
+  const applyRemoteSnapshotRef = useRef(null);
+  const scheduleRemoteSyncRef = useRef(null);
 
   useEffect(() => {
     userIdRef.current = activeUserId;
@@ -285,16 +296,76 @@ function BoardApp() {
     remoteLastSeenRef.current = effectiveTimestamp;
     releaseRemoteApply();
   }, []);
+  
+  // Keep ref updated with latest function
+  useEffect(() => {
+    applyRemoteSnapshotRef.current = applyRemoteSnapshot;
+  }, [applyRemoteSnapshot]);
 
   const syncToSupabase = useCallback(async (snapshot) => {
     const userId = userIdRef.current;
-    if (!boardId || !userId) return;
+    let session = null;
+    
+    // Early validation with logging
+    if (!boardId) {
+      console.warn('[Sync] Cannot sync: missing boardId');
+      return;
+    }
+    
+    if (!userId) {
+      console.warn('[Sync] Cannot sync: missing userId');
+      return;
+    }
+
+    // Verify session is still valid before attempting sync
+    try {
+      const { data: { session: currentSession }, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) {
+        console.error('[Sync] Session check failed:', {
+          error: sessionError,
+          message: sessionError.message,
+          code: sessionError.code
+        });
+        setSyncError(sessionError);
+        return;
+      }
+      
+      if (!currentSession) {
+        console.warn('[Sync] Cannot sync: no valid session', {
+          userId,
+          boardId
+        });
+        return;
+      }
+
+      // Verify session user matches our userId
+      if (currentSession.user.id !== userId) {
+        console.error('[Sync] Session user mismatch:', {
+          sessionUserId: currentSession.user.id,
+          expectedUserId: userId
+        });
+        return;
+      }
+
+      session = currentSession;
+    } catch (authError) {
+      console.error('[Sync] Auth verification failed:', authError);
+      setSyncError(authError);
+      return;
+    }
 
     const syncTimestamp = snapshot.lastUpdated || new Date().toISOString();
 
     try {
       setSyncError(null);
       setIsSyncing(true);
+
+      console.log('[Sync] Starting sync:', {
+        userId,
+        boardId,
+        timestamp: syncTimestamp,
+        columnsCount: Object.keys(snapshot.columns || {}).length
+      });
 
       const rows = [];
 
@@ -319,17 +390,85 @@ function BoardApp() {
         });
       });
 
-      const { error: deleteError } = await supabase
-        .from('todos')
-        .delete()
-        .eq('board_id', boardId)
-        .eq('owner_id', userId);
-
-      if (deleteError) throw deleteError;
-
+      // Use upsert instead of delete+insert to avoid duplicate key errors
+      // This will update existing todos or insert new ones
       if (rows.length > 0) {
-        const { error: insertError } = await supabase.from('todos').insert(rows);
-        if (insertError) throw insertError;
+        console.log(`[Sync] Upserting ${rows.length} todos...`);
+        const { error: upsertError } = await supabase
+          .from('todos')
+          .upsert(rows, { onConflict: 'id' });
+        if (upsertError) {
+          console.error('[Sync] Upsert failed:', {
+            error: upsertError,
+            message: upsertError.message,
+            code: upsertError.code,
+            details: upsertError.details,
+            hint: upsertError.hint,
+            rowsCount: rows.length,
+            sampleRow: rows[0]
+          });
+          throw upsertError;
+        }
+        console.log('[Sync] Upsert successful');
+        
+        // Delete any todos that are no longer in the local state
+        const currentTodoIds = new Set(rows.map(r => r.id));
+        
+        // Get all existing todos for this board
+        const { data: existingTodos, error: fetchError } = await supabase
+          .from('todos')
+          .select('id')
+          .eq('board_id', boardId)
+          .eq('owner_id', userId);
+        
+        if (fetchError) {
+          console.error('[Sync] Fetch existing todos failed:', {
+            error: fetchError,
+            message: fetchError.message,
+            code: fetchError.code
+          });
+          throw fetchError;
+        }
+        
+        // Find todos to delete (exist in DB but not in local state)
+        const todosToDelete = (existingTodos || [])
+          .filter(todo => !currentTodoIds.has(todo.id))
+          .map(todo => todo.id);
+        
+        if (todosToDelete.length > 0) {
+          console.log(`[Sync] Deleting ${todosToDelete.length} orphaned todos...`);
+          const { error: deleteError } = await supabase
+            .from('todos')
+            .delete()
+            .eq('board_id', boardId)
+            .eq('owner_id', userId)
+            .in('id', todosToDelete);
+          if (deleteError) {
+            console.error('[Sync] Delete failed:', {
+              error: deleteError,
+              message: deleteError.message,
+              code: deleteError.code,
+              todosToDeleteCount: todosToDelete.length
+            });
+            throw deleteError;
+          }
+        }
+      } else {
+        // If no rows, delete all todos for this board
+        console.log('[Sync] No rows to sync, cleaning up all todos...');
+        const { error: deleteError } = await supabase
+          .from('todos')
+          .delete()
+          .eq('board_id', boardId)
+          .eq('owner_id', userId);
+        if (deleteError) {
+          console.error('[Sync] Delete all failed:', {
+            error: deleteError,
+            message: deleteError.message,
+            code: deleteError.code
+          });
+          throw deleteError;
+        }
       }
 
       const { error: boardError } = await supabase
@@ -338,11 +477,29 @@ function BoardApp() {
         .eq('id', boardId)
         .eq('owner_id', userId);
 
-      if (boardError) throw boardError;
+      if (boardError) {
+        console.error('[Sync] Board update failed:', {
+          error: boardError,
+          message: boardError.message,
+          code: boardError.code
+        });
+        throw boardError;
+      }
 
       remoteLastSeenRef.current = syncTimestamp;
+      console.log('[Sync] Sync completed successfully');
     } catch (error) {
-      console.error('Error syncing todos to Supabase:', error);
+      console.error('[Sync] Error syncing todos to Supabase:', {
+        error,
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+        userId,
+        boardId,
+        hasSession: !!session,
+        sessionUserId: session?.user?.id
+      });
       setSyncError(error);
       throw error;
     } finally {
@@ -351,7 +508,10 @@ function BoardApp() {
   }, [boardId, columnMeta]);
 
   const scheduleRemoteSync = useCallback((snapshot, delay = 400) => {
-    if (!snapshot) return;
+    if (!snapshot) {
+      console.warn('[ScheduleSync] No snapshot provided');
+      return;
+    }
 
     const syncTimestamp = snapshot.lastUpdated || new Date().toISOString();
     const normalizedSnapshot = {
@@ -365,14 +525,30 @@ function BoardApp() {
     const userId = userIdRef.current;
     const canSyncNow = Boolean(boardId) && hasMeta && Boolean(userId);
 
+    console.log('[ScheduleSync] Checking sync conditions:', {
+      hasSnapshot: !!snapshot,
+      hasMeta,
+      userId,
+      boardId,
+      canSyncNow,
+      delay
+    });
+
     if (!canSyncNow) {
+      console.warn('[ScheduleSync] Cannot sync now - missing requirements:', {
+        hasBoardId: !!boardId,
+        hasMeta,
+        hasUserId: !!userId
+      });
       return;
     }
 
     if (syncTimerRef.current) {
+      console.log('[ScheduleSync] Sync already scheduled, skipping');
       return;
     }
 
+    console.log(`[ScheduleSync] Scheduling sync in ${delay}ms`);
     syncTimerRef.current = setTimeout(async () => {
       syncTimerRef.current = null;
 
@@ -380,17 +556,25 @@ function BoardApp() {
       pendingSyncRef.current = null;
 
       if (!payload) {
+        console.warn('[ScheduleSync] No payload available when timer fired');
         return;
       }
 
+      console.log('[ScheduleSync] Timer fired, calling syncToSupabase');
       try {
         await syncToSupabase(payload);
       } catch (error) {
+        console.error('[ScheduleSync] Sync failed, retrying in 3s:', error);
         pendingSyncRef.current = payload;
         scheduleRemoteSync(payload, 3000);
       }
     }, delay);
   }, [boardId, columnMeta, syncToSupabase]);
+  
+  // Keep ref updated with latest function
+  useEffect(() => {
+    scheduleRemoteSyncRef.current = scheduleRemoteSync;
+  }, [scheduleRemoteSync]);
 
   useEffect(() => {
     if (isHydratingRef.current) {
@@ -431,7 +615,7 @@ function BoardApp() {
   const [showDone, setShowDone] = useState(false);
   const [doneBlinking, setDoneBlinking] = useState(false);
   const [showIgnore, setShowIgnore] = useState(false);
-  const [ignoreBlinking, setIgnoreBlinking] = useState(false);
+  const [ignoreBlinking] = useState(false); // Blinking state (setter not used, value used for display)
   const [focusedItemId, setFocusedItemId] = useState(null);
   const [quickAddColumn, setQuickAddColumn] = useState(null);
 
@@ -449,47 +633,64 @@ function BoardApp() {
   const loadBoard = useCallback(async () => {
     const userId = activeUserId || userIdRef.current;
     if (!userId) {
-      console.warn('Supabase session unavailable; skipping remote load.');
+      console.warn('[LoadBoard] Supabase session unavailable; skipping remote load.');
       return;
     }
+
+    console.log('[LoadBoard] Starting board load for user:', userId);
 
     try {
       let boardRecord = null;
       let createdBoard = false;
 
+      console.log('[LoadBoard] Fetching boards for user...');
       const { data: boardRows, error: boardError } = await supabase
         .from('boards')
         .select('id, name, updated_at')
         .eq('owner_id', userId)
-        .order('created_at', { ascending: true })
+        .order('updated_at', { ascending: false })
         .limit(1);
 
-      if (boardError) throw boardError;
+      if (boardError) {
+        console.error('[LoadBoard] Error fetching boards:', boardError);
+        throw boardError;
+      }
+
+      console.log('[LoadBoard] Board query result:', { boardRows, count: boardRows?.length });
 
       if (boardRows && boardRows.length > 0) {
         boardRecord = boardRows[0];
+        console.log('[LoadBoard] Found existing board:', boardRecord.id);
       } else {
+        console.log('[LoadBoard] No board found, creating new one...');
         const { data: newBoard, error: newBoardError } = await supabase
           .from('boards')
           .insert({ name: 'Personal Board', owner_id: userId })
           .select('id, name, updated_at')
           .single();
 
-        if (newBoardError) throw newBoardError;
+        if (newBoardError) {
+          console.error('[LoadBoard] Error creating board:', newBoardError);
+          throw newBoardError;
+        }
         boardRecord = newBoard;
         createdBoard = true;
+        console.log('[LoadBoard] Created new board:', boardRecord.id);
       }
 
       if (!boardRecord) {
+        console.error('[LoadBoard] No board record available after fetch/create');
         return;
       }
-
-      if (!isMountedRef.current) return;
+      
+      console.log('[LoadBoard] Setting boardId to:', boardRecord.id);
+      // Set state directly - React will safely ignore if component unmounted
       setBoardId(boardRecord.id);
 
       let columnRows = [];
 
       if (createdBoard) {
+        console.log('[LoadBoard] Creating default columns for new board...');
         const defaultColumns = [
           { slug: 'do', name: 'DO' },
           { slug: 'done', name: 'DONE' },
@@ -503,14 +704,20 @@ function BoardApp() {
           owner_id: userId,
         }));
 
+        console.log('[LoadBoard] Inserting columns:', defaultColumns);
         const { data: insertedColumns, error: insertColumnsError } = await supabase
           .from('board_columns')
           .insert(defaultColumns)
           .select('id, slug, name, sort_order');
 
-        if (insertColumnsError) throw insertColumnsError;
+        if (insertColumnsError) {
+          console.error('[LoadBoard] Error inserting columns:', insertColumnsError);
+          throw insertColumnsError;
+        }
         columnRows = insertedColumns || [];
+        console.log('[LoadBoard] Inserted columns result:', columnRows);
       } else {
+        console.log('[LoadBoard] Fetching existing columns for board:', boardRecord.id);
         const { data: existingColumns, error: columnError } = await supabase
           .from('board_columns')
           .select('id, slug, name, sort_order')
@@ -518,18 +725,60 @@ function BoardApp() {
           .eq('owner_id', userId)
           .order('sort_order', { ascending: true });
 
-        if (columnError) throw columnError;
+        if (columnError) {
+          console.error('[LoadBoard] Error fetching columns:', columnError);
+          throw columnError;
+        }
         columnRows = existingColumns || [];
+        console.log('[LoadBoard] Fetched columns result:', { columnRows, count: columnRows?.length });
+        
+        // If board exists but has no columns, create them (fixes boards created before columns were added)
+        if (columnRows.length === 0) {
+          console.log('[LoadBoard] Board exists but has no columns, creating default columns...');
+          const defaultColumns = [
+            { slug: 'do', name: 'DO' },
+            { slug: 'done', name: 'DONE' },
+            { slug: 'ignore', name: 'IGNORE' },
+            { slug: 'others', name: 'OTHERS' },
+          ].map((col, index) => ({
+            board_id: boardRecord.id,
+            slug: col.slug,
+            name: col.name,
+            sort_order: index + 1,
+            owner_id: userId,
+          }));
+
+          console.log('[LoadBoard] Inserting missing columns:', defaultColumns);
+          const { data: insertedColumns, error: insertColumnsError } = await supabase
+            .from('board_columns')
+            .insert(defaultColumns)
+            .select('id, slug, name, sort_order');
+
+          if (insertColumnsError) {
+            console.error('[LoadBoard] Error inserting missing columns:', insertColumnsError);
+            throw insertColumnsError;
+          }
+          columnRows = insertedColumns || [];
+          console.log('[LoadBoard] Created missing columns:', columnRows);
+        }
       }
 
-      if (!isMountedRef.current) return;
-
+      // Continue loading - React will safely ignore state updates if component unmounted
+      console.log('[LoadBoard] Processing columnRows:', { columnRows, count: columnRows.length });
       const baseColumns = createEmptyColumns();
       const meta = {};
       const columnIdToSlug = {};
 
+      if (columnRows.length === 0) {
+        console.warn('[LoadBoard] No columns found! This will prevent syncing.');
+      }
+
       columnRows.forEach((column) => {
-        if (!baseColumns[column.slug]) return;
+        console.log('[LoadBoard] Processing column:', column);
+        if (!baseColumns[column.slug]) {
+          console.warn(`[LoadBoard] Column slug '${column.slug}' not found in baseColumns`);
+          return;
+        }
         baseColumns[column.slug] = {
           ...baseColumns[column.slug],
           name: column.name || baseColumns[column.slug].name,
@@ -542,6 +791,8 @@ function BoardApp() {
         columnIdToSlug[column.id] = column.slug;
       });
 
+      console.log('[LoadBoard] Setting columnMeta:', meta);
+      console.log('[LoadBoard] columnIdToSlug:', columnIdToSlug);
       setColumnMeta(meta);
 
       const { data: todoRows, error: todoError } = await supabase
@@ -552,7 +803,7 @@ function BoardApp() {
         .order('position', { ascending: true });
 
       if (todoError) throw todoError;
-      if (!isMountedRef.current) return;
+      // Continue - React handles unmounted component state updates safely
 
       let remoteLatest = boardRecord.updated_at || null;
 
@@ -595,23 +846,37 @@ function BoardApp() {
       const remoteTime = remoteLatest ? Date.parse(remoteLatest) : 0;
 
       if (remoteTime > localTime) {
-        applyRemoteSnapshot(baseColumns, remoteLatest);
+        // Use ref to get latest function version without causing dependency loop
+        if (applyRemoteSnapshotRef.current) {
+          applyRemoteSnapshotRef.current(baseColumns, remoteLatest);
+        }
       } else if (localTime > remoteTime && lastUpdatedRef.current) {
-        scheduleRemoteSync({ columns: columnsRef.current, lastUpdated: lastUpdatedRef.current }, 0);
+        // Use ref to get latest function version without causing dependency loop
+        if (scheduleRemoteSyncRef.current) {
+          scheduleRemoteSyncRef.current({ columns: columnsRef.current, lastUpdated: lastUpdatedRef.current }, 0);
+        }
       } else if (!lastUpdatedRef.current && remoteLatest) {
         setLastUpdated(remoteLatest);
         lastUpdatedRef.current = remoteLatest;
       }
     } catch (error) {
-      if (process.env.NODE_ENV !== 'production') {
-        console.error('Error loading data from Supabase:', error);
-      }
+      console.error('[LoadBoard] Error loading data from Supabase:', {
+        error,
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint
+      });
     }
-  }, [activeUserId, applyRemoteSnapshot, scheduleRemoteSync]);
+  }, [activeUserId]); // Removed applyRemoteSnapshot and scheduleRemoteSync to prevent infinite loops
 
   useEffect(() => {
+    if (!activeUserId) return; // Don't load if no user
     loadBoard();
-  }, [loadBoard]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // loadBoard intentionally omitted: using refs (applyRemoteSnapshotRef, scheduleRemoteSyncRef)
+    // to prevent infinite loops. The function is stable and only depends on activeUserId.
+  }, [activeUserId]);
 
   useEffect(() => {
     if (!boardId) {
@@ -635,6 +900,11 @@ function BoardApp() {
         table: 'todos',
         filter: `board_id=eq.${boardId}`,
       }, (payload) => {
+        // Prevent infinite loops - don't process if we're already applying remote changes
+        if (isApplyingRemoteRef.current) {
+          return;
+        }
+
         const remoteTimestamp = payload.new?.updated_at || payload.new?.created_at;
         const remoteTime = remoteTimestamp ? Date.parse(remoteTimestamp) : 0;
         const localTime = lastUpdatedRef.current ? Date.parse(lastUpdatedRef.current) : 0;
@@ -655,7 +925,11 @@ function BoardApp() {
         channelRef.current = null;
       }
     };
-  }, [boardId, loadBoard]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // loadBoard intentionally omitted: Realtime subscription calls loadBoard via closure,
+    // but including it in deps would cause infinite loops. The subscription is recreated
+    // when boardId changes, which is the correct trigger.
+  }, [boardId]);
 
   // Initialize column toggles
   const { toggleDoDone, toggleOthersIgnore, handleMigrationComplete } = useColumnToggles(
@@ -679,11 +953,6 @@ function BoardApp() {
     }));
   }, []);
 
-  // Wrap sanitizeItemText in useCallback
-  const sanitizeItemText = useCallback((text) => {
-    if (typeof text !== 'string') return '';
-    return text.trim().slice(0, 1000); // Limit length to 1000 chars
-  }, []);
 
   // Wrap filterItems in useCallback
   const filterItems = useCallback((items, columnId) => {
@@ -1702,12 +1971,7 @@ function BoardApp() {
 
   // Initialize quick add functionality
   const {
-    quickAddInputRef,
-    handleQuickAddKeyDown,
-    handleQuickAddBlur,
-    renderQuickAddInput,
-    startEditItem,
-    getPreviousColumnId
+    renderQuickAddInput
   } = useQuickAdd({
     addTodo,
     columns,
@@ -1874,6 +2138,9 @@ function BoardApp() {
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
         >
+          <div className="top-bar" style={{ display: 'flex', justifyContent: 'flex-end', padding: '8px' }}>
+            <button onClick={handleSignOut} style={{ cursor: 'pointer', padding: '8px 16px', fontSize: '14px' }}>Log out</button>
+          </div>
           <ProTipTooltip onAction={setTipActionHandler} />
           
           {/* Show selection box while dragging but not during item drag */}

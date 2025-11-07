@@ -11,6 +11,9 @@ const SelectableItem = ({ item, isSelected, isFocused, onClick, onUpdate, column
     if (item && item.text) {
       setEditText(item.text);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Only depend on item.text, not entire item object to avoid unnecessary re-runs
+    // when other item properties change (e.g., completedAt, metadata)
   }, [item?.text]);
 
   // Focus input when editing starts
