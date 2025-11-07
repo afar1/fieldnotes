@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Environment variables (if you create .env files)
+.env
+.env.local
+.env.*.local
+
+# Data exports (may contain sensitive data)
+my-todos-export.json
+*.json.backup
+
+# Build outputs
+build/
+dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
