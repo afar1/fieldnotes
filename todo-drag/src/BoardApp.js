@@ -230,6 +230,8 @@ function BoardApp() {
   const syncTimerRef = useRef(null);
   const channelRef = useRef(null);
   const isMountedRef = useRef(true);
+  const applyRemoteSnapshotRef = useRef(null);
+  const scheduleRemoteSyncRef = useRef(null);
 
   useEffect(() => {
     userIdRef.current = activeUserId;
@@ -285,6 +287,11 @@ function BoardApp() {
     remoteLastSeenRef.current = effectiveTimestamp;
     releaseRemoteApply();
   }, []);
+  
+  // Keep ref updated with latest function
+  useEffect(() => {
+    applyRemoteSnapshotRef.current = applyRemoteSnapshot;
+  }, [applyRemoteSnapshot]);
 
   const syncToSupabase = useCallback(async (snapshot) => {
     const userId = userIdRef.current;
@@ -391,6 +398,11 @@ function BoardApp() {
       }
     }, delay);
   }, [boardId, columnMeta, syncToSupabase]);
+  
+  // Keep ref updated with latest function
+  useEffect(() => {
+    scheduleRemoteSyncRef.current = scheduleRemoteSync;
+  }, [scheduleRemoteSync]);
 
   useEffect(() => {
     if (isHydratingRef.current) {
@@ -595,9 +607,15 @@ function BoardApp() {
       const remoteTime = remoteLatest ? Date.parse(remoteLatest) : 0;
 
       if (remoteTime > localTime) {
-        applyRemoteSnapshot(baseColumns, remoteLatest);
+        // Use ref to get latest function version without causing dependency loop
+        if (applyRemoteSnapshotRef.current) {
+          applyRemoteSnapshotRef.current(baseColumns, remoteLatest);
+        }
       } else if (localTime > remoteTime && lastUpdatedRef.current) {
-        scheduleRemoteSync({ columns: columnsRef.current, lastUpdated: lastUpdatedRef.current }, 0);
+        // Use ref to get latest function version without causing dependency loop
+        if (scheduleRemoteSyncRef.current) {
+          scheduleRemoteSyncRef.current({ columns: columnsRef.current, lastUpdated: lastUpdatedRef.current }, 0);
+        }
       } else if (!lastUpdatedRef.current && remoteLatest) {
         setLastUpdated(remoteLatest);
         lastUpdatedRef.current = remoteLatest;
