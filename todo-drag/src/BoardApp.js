@@ -607,11 +607,12 @@ function BoardApp() {
         console.error('Error loading data from Supabase:', error);
       }
     }
-  }, [activeUserId, applyRemoteSnapshot, scheduleRemoteSync]);
+  }, [activeUserId]); // Removed applyRemoteSnapshot and scheduleRemoteSync to prevent infinite loops
 
   useEffect(() => {
+    if (!activeUserId) return; // Don't load if no user
     loadBoard();
-  }, [loadBoard]);
+  }, [activeUserId]); // Only depend on activeUserId, not loadBoard
 
   useEffect(() => {
     if (!boardId) {
@@ -635,6 +636,11 @@ function BoardApp() {
         table: 'todos',
         filter: `board_id=eq.${boardId}`,
       }, (payload) => {
+        // Prevent infinite loops - don't process if we're already applying remote changes
+        if (isApplyingRemoteRef.current) {
+          return;
+        }
+
         const remoteTimestamp = payload.new?.updated_at || payload.new?.created_at;
         const remoteTime = remoteTimestamp ? Date.parse(remoteTimestamp) : 0;
         const localTime = lastUpdatedRef.current ? Date.parse(lastUpdatedRef.current) : 0;
@@ -655,7 +661,7 @@ function BoardApp() {
         channelRef.current = null;
       }
     };
-  }, [boardId, loadBoard]);
+  }, [boardId]); // Removed loadBoard dependency to prevent infinite loops
 
   // Initialize column toggles
   const { toggleDoDone, toggleOthersIgnore, handleMigrationComplete } = useColumnToggles(
