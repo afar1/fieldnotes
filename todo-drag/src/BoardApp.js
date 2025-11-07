@@ -11,6 +11,7 @@ import { useColumnToggles } from './hooks/useColumnToggles';
 import { findNearestColumn, getPreviousColumnId, startEditItem } from './utils/columnUtils';
 import { supabase } from './supabaseClient';
 import { useAuth } from './auth/AuthContext';
+import { useNavigate } from 'react-router-dom';
 
 // Plain-English helper: generate ids that work with Supabase UUID columns
 const createClientId = () => {
@@ -189,7 +190,13 @@ const startEmberEdit = (id, setEditingId) => {
 
 function BoardApp() {
   const { user, signOut } = useAuth();
+  const navigate = useNavigate();
   const activeUserId = user?.id ?? null;
+  
+  const handleSignOut = async () => {
+    await signOut();
+    navigate('/login');
+  };
   const [isMigrating, setIsMigrating] = useState(false);
 
   const localSnapshotRef = useRef(null);
@@ -1930,7 +1937,7 @@ function BoardApp() {
           onMouseMove={handleMouseMove}
         >
           <div className="top-bar" style={{ display: 'flex', justifyContent: 'flex-end', padding: '8px' }}>
-            <button onClick={signOut} style={{ cursor: 'pointer' }}>Log out</button>
+            <button onClick={handleSignOut} style={{ cursor: 'pointer', padding: '8px 16px', fontSize: '14px' }}>Log out</button>
           </div>
           <ProTipTooltip onAction={setTipActionHandler} />
           
