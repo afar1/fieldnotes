@@ -326,17 +326,48 @@ function BoardApp() {
         });
       });
 
-      const { error: deleteError } = await supabase
-        .from('todos')
-        .delete()
-        .eq('board_id', boardId)
-        .eq('owner_id', userId);
-
-      if (deleteError) throw deleteError;
-
+      // Use upsert instead of delete+insert to avoid duplicate key errors
+      // This will update existing todos or insert new ones
       if (rows.length > 0) {
-        const { error: insertError } = await supabase.from('todos').insert(rows);
-        if (insertError) throw insertError;
+        const { error: upsertError } = await supabase
+          .from('todos')
+          .upsert(rows, { onConflict: 'id' });
+        if (upsertError) throw upsertError;
+        
+        // Delete any todos that are no longer in the local state
+        const currentTodoIds = new Set(rows.map(r => r.id));
+        
+        // Get all existing todos for this board
+        const { data: existingTodos, error: fetchError } = await supabase
+          .from('todos')
+          .select('id')
+          .eq('board_id', boardId)
+          .eq('owner_id', userId);
+        
+        if (fetchError) throw fetchError;
+        
+        // Find todos to delete (exist in DB but not in local state)
+        const todosToDelete = (existingTodos || [])
+          .filter(todo => !currentTodoIds.has(todo.id))
+          .map(todo => todo.id);
+        
+        if (todosToDelete.length > 0) {
+          const { error: deleteError } = await supabase
+            .from('todos')
+            .delete()
+            .eq('board_id', boardId)
+            .eq('owner_id', userId)
+            .in('id', todosToDelete);
+          if (deleteError) throw deleteError;
+        }
+      } else {
+        // If no rows, delete all todos for this board
+        const { error: deleteError } = await supabase
+          .from('todos')
+          .delete()
+          .eq('board_id', boardId)
+          .eq('owner_id', userId);
+        if (deleteError) throw deleteError;
       }
 
       const { error: boardError } = await supabase
@@ -471,10 +502,9 @@ function BoardApp() {
 
       const { data: boardRows, error: boardError } = await supabase
         .from('boards')
-        .select('id, name, updated_at, created_at')
+        .select('id, name, updated_at')
         .eq('owner_id', userId)
         .order('updated_at', { ascending: false })
-        .order('created_at', { ascending: false })
         .limit(1);
 
       if (boardError) throw boardError;
