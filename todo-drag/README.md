@@ -1,6 +1,20 @@
-# Getting Started with Create React App
+# Field Todo Application
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+A React-based todo board application with Supabase backend and authentication.
+
+## Architecture
+
+- **Frontend**: React with Create React App
+- **Backend**: Supabase (PostgreSQL database with Row Level Security)
+- **Authentication**: Supabase Auth (email/password)
+- **Deployment**: Vercel
+
+## Application Entry Point
+
+The application uses a single entry point:
+- `src/index.js` → `src/App.js` → `src/BoardApp.js`
+
+**Note:** An earlier IndexedDB/Dexie.js implementation was removed. See git tag `indexeddb-last` for historical reference.
 
 ## Available Scripts
 

@@ -89,5 +89,5 @@
 - The app is already configured to use Supabase Auth
 - Realtime is already implemented in the code
 - All that's needed is dashboard configuration and deployment
-- The unused IndexedDB code (`App.tsx`, `index.tsx`) can be removed later if desired
+- **IndexedDB/Dexie.js implementation removed**: The unused IndexedDB code has been removed. See git tag `indexeddb-last` for historical reference if needed.
 
