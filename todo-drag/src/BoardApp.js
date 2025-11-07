@@ -188,7 +188,7 @@ const startEmberEdit = (id, setEditingId) => {
 };
 
 function BoardApp() {
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
   const activeUserId = user?.id ?? null;
   const [isMigrating, setIsMigrating] = useState(false);
 
@@ -471,9 +471,10 @@ function BoardApp() {
 
       const { data: boardRows, error: boardError } = await supabase
         .from('boards')
-        .select('id, name, updated_at')
+        .select('id, name, updated_at, created_at')
         .eq('owner_id', userId)
-        .order('created_at', { ascending: true })
+        .order('updated_at', { ascending: false })
+        .order('created_at', { ascending: false })
         .limit(1);
 
       if (boardError) throw boardError;
@@ -1898,6 +1899,9 @@ function BoardApp() {
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
         >
+          <div className="top-bar" style={{ display: 'flex', justifyContent: 'flex-end', padding: '8px' }}>
+            <button onClick={signOut} style={{ cursor: 'pointer' }}>Log out</button>
+          </div>
           <ProTipTooltip onAction={setTipActionHandler} />
           
           {/* Show selection box while dragging but not during item drag */}
