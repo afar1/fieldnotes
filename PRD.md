@@ -20,68 +20,30 @@ This document outlines the implementation plan for adding a robust front-end dat
 5. Efficient data syncing
 6. Minimal configuration
 
-### Selected Solution: IndexedDB with Dexie.js
-We will use Dexie.js as our IndexedDB wrapper for the following reasons:
-1. Pure front-end solution with no backend required
-2. Excellent TypeScript support
-3. Promise-based API
-4. Built-in indexing and querying
-5. Robust offline support
-6. Active maintenance and community
+### Selected Solution: Supabase (PostgreSQL)
+The application uses Supabase as the backend database and authentication provider:
+1. PostgreSQL database with Row Level Security (RLS)
+2. Built-in authentication (email/password)
+3. Real-time subscriptions for live updates
+4. RESTful API for data operations
+5. Secure user data isolation via RLS policies
+
+**Note:** An earlier IndexedDB/Dexie.js implementation was removed in favor of Supabase. See git tag `indexeddb-last` for historical reference.
 
 ### Database Schema
-```typescript
-// Database structure
-interface TodoItem {
-  id: string;
-  text: string;
-  columnId: string;
-  completedAt?: string;
-  nextContact?: string;
-  originalDays?: number;
-  userId: string;
-  createdAt: string;
-  updatedAt: string;
-}
+The database schema is managed in Supabase with the following tables:
+- `boards`: User boards (one per user by default)
+- `board_columns`: Columns within boards (do, done, ignore, others, ember)
+- `todos`: Todo items linked to columns and boards
+- All tables use `owner_id` for Row Level Security (RLS) to ensure user data isolation
 
-interface Column {
-  id: string;
-  name: string;
-  userId: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-interface UserSettings {
-  userId: string;
-  theme: string;
-  showDone: boolean;
-  showIgnore: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-```
-
-### Implementation Phases
-1. Phase 1: Basic Setup
-   - Install and configure Dexie.js
-   - Create database schema
-   - Implement basic CRUD operations
-
-2. Phase 2: Data Migration
-   - Create migration utility from localStorage
-   - Implement version management
-   - Add data validation
-
-3. Phase 3: Offline Support
-   - Implement offline detection
-   - Add sync queue for offline changes
-   - Handle conflict resolution
-
-4. Phase 4: Performance Optimization
-   - Add indexing for frequent queries
-   - Implement bulk operations
-   - Add caching layer
+### Implementation Status
+The Supabase implementation is complete and includes:
+- Email/password authentication via Supabase Auth
+- Row Level Security (RLS) policies for data isolation
+- Real-time subscriptions for live updates (optional)
+- RESTful API integration for CRUD operations
+- Protected routes with React Router
 
 ## Authentication Implementation Plan
 
@@ -92,105 +54,53 @@ interface UserSettings {
 4. Protected routes
 5. Minimal user friction
 
-### Selected Solution: NextAuth.js
-We will use NextAuth.js for authentication because:
-1. Native Vercel integration
-2. Built-in Google OAuth support
+### Selected Solution: Supabase Auth
+The application uses Supabase Auth for authentication:
+1. Email/password authentication
+2. Password reset flow
 3. Secure session management
-4. TypeScript support
-5. Easy to test and deploy
+4. Integrated with Supabase database
+5. Row Level Security (RLS) for data isolation
 
 ### Authentication Flow
-1. User clicks "Sign in with Google"
-2. Redirected to Google OAuth consent screen
-3. After consent, redirected back to app
+1. User navigates to login page
+2. Enters email and password (or uses password reset)
+3. Supabase Auth validates credentials
 4. Session created and stored
-5. User data loaded from IndexedDB
+5. User data loaded from Supabase database
+6. Protected routes accessible
 
-### Implementation Phases
-1. Phase 1: Basic Auth Setup
-   - Install and configure NextAuth.js
-   - Set up Google OAuth credentials
-   - Implement sign in/out flow
-
-2. Phase 2: Protected Routes
-   - Create auth middleware
-   - Implement protected routes
-   - Add loading states
-
-3. Phase 3: User Data Management
-   - Link user data with auth
-   - Implement data isolation
-   - Add user settings
-
-4. Phase 4: Security Enhancements
-   - Add CSRF protection
-   - Implement rate limiting
-   - Add security headers
+### Implementation Status
+Authentication is fully implemented:
+- Email/password authentication
+- Password reset flow
+- Protected routes with React Router
+- Session management via Supabase Auth
+- User data isolation via RLS policies
 
 ## Technical Architecture
 
 ### Database Layer
-```typescript
-// Database service
-class TodoDatabase extends Dexie {
-  items: Dexie.Table<TodoItem, string>;
-  columns: Dexie.Table<Column, string>;
-  settings: Dexie.Table<UserSettings, string>;
-
-  constructor() {
-    super('TodoDB');
-    this.version(1).stores({
-      items: 'id, columnId, userId, updatedAt',
-      columns: 'id, userId',
-      settings: 'userId'
-    });
-  }
-}
-```
+The application uses Supabase client (`@supabase/supabase-js`) for all database operations:
+- Direct queries to PostgreSQL tables
+- Real-time subscriptions for live updates
+- Automatic RLS enforcement for data security
 
 ### Auth Integration
-```typescript
-// Auth configuration
-export const authOptions = {
-  providers: [
-    GoogleProvider({
-      clientId: process.env.GOOGLE_ID,
-      clientSecret: process.env.GOOGLE_SECRET,
-    }),
-  ],
-  callbacks: {
-    session: async ({ session, token }) => {
-      if (session?.user) {
-        session.user.id = token.sub;
-      }
-      return session;
-    },
-  },
-};
-```
+Authentication is handled via Supabase Auth:
+- `supabase.auth.signInWithPassword()` for login
+- `supabase.auth.signOut()` for logout
+- `supabase.auth.resetPasswordForEmail()` for password reset
+- Session management via `supabase.auth.getSession()`
 
-## Implementation Timeline
+## Implementation Status
 
-### Week 1: Database Setup
-- Day 1-2: Basic Dexie.js setup
-- Day 3-4: Schema implementation
-- Day 5: Data migration utility
-
-### Week 2: Auth Integration
-- Day 1-2: NextAuth.js setup
-- Day 3-4: Google OAuth integration
-- Day 5: Protected routes
-
-### Week 3: Data Management
-- Day 1-2: User data isolation
-- Day 3-4: Offline support
-- Day 5: Testing and optimization
-
-### Week 4: Polish & Deploy
-- Day 1-2: Security enhancements
-- Day 3-4: Performance optimization
-- Day 5: Production deployment
+The Supabase-based implementation is complete and deployed:
+- Database schema and RLS policies configured
+- Authentication flow implemented
+- Protected routes working
+- Real-time subscriptions available (optional)
+- Production deployment on Vercel (`field-alpha.vercel.app`)
 
 ## Success Metrics
 1. Zero data loss during migration
@@ -220,15 +130,12 @@ export const authOptions = {
 5. Advanced data analytics
 
 ## Dependencies
-1. Dexie.js: ^3.2.4
-2. NextAuth.js: ^4.24.5
-3. @types/google.accounts: ^0.0.14
-4. react-query: ^5.0.0
+1. @supabase/supabase-js: ^2.74.0
+2. react-router-dom: ^6.26.2
+3. react-beautiful-dnd: 13.1.1
 
 ## Environment Variables
 ```env
-GOOGLE_ID=your_google_client_id
-GOOGLE_SECRET=your_google_client_secret
-NEXTAUTH_URL=your_app_url
-NEXTAUTH_SECRET=your_nextauth_secret
+REACT_APP_SUPABASE_URL=your_supabase_project_url
+REACT_APP_SUPABASE_ANON_KEY=your_supabase_anon_key
 ``` 
