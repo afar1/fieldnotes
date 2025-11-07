@@ -1,4 +1,12 @@
 {
+  "name": "field",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "cd todo-drag && npm start",
+    "build": "cd todo-drag && npm run build",
+    "test": "cd todo-drag && npm test",
+    "install:app": "cd todo-drag && npm install"
+  },
   "dependencies": {
     "@supabase/supabase-js": "^2.58.0"
   }
